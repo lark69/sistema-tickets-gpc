@@ -1,0 +1,38 @@
+import type { AppConfig, ProductFormState } from "../types";
+import { currencyToCents } from "./currency";
+
+export function validateProductForm(form: ProductFormState): string | null {
+  if (!form.name.trim()) {
+    return "Informe o nome do produto.";
+  }
+
+  if (form.name.trim().length > 120) {
+    return "O nome do produto deve ter no maximo 120 caracteres.";
+  }
+
+  if (currencyToCents(form.price) <= 0) {
+    return "Informe um valor maior que zero.";
+  }
+
+  return null;
+}
+
+export function validateConfig(config: AppConfig): string | null {
+  if (!config.companyName.trim()) {
+    return "Informe o nome da empresa.";
+  }
+
+  if (!config.taxId.trim()) {
+    return "Informe o CPF ou CNPJ.";
+  }
+
+  if (config.validityDays < 1 || config.validityDays > 3650) {
+    return "A validade deve ficar entre 1 e 3650 dias.";
+  }
+
+  if (config.printWidthChars < 32 || config.printWidthChars > 64) {
+    return "A largura deve ficar entre 32 e 64 caracteres.";
+  }
+
+  return null;
+}
