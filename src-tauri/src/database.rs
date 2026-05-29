@@ -297,6 +297,19 @@ impl Database {
         Ok(exists)
     }
 
+    pub fn deactivate_ticket(&self, ticket_id: &str) -> AppResult<bool> {
+        self.cleanup_expired_tickets()?;
+        let normalized_id = normalize_ticket_id(ticket_id)?;
+        let now = now_millis();
+        let connection = self.connection()?;
+        let affected = connection.execute(
+            "DELETE FROM issued_tickets WHERE ticket_id = ?1 AND expires_at >= ?2",
+            params![normalized_id, now],
+        )?;
+
+        Ok(affected > 0)
+    }
+
     pub fn cleanup_expired_tickets(&self) -> AppResult<()> {
         let connection = self.connection()?;
         connection.execute(

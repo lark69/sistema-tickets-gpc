@@ -1,4 +1,4 @@
-import { BadgeCheck, SearchCheck } from "lucide-react";
+import { BadgeCheck, SearchCheck, ShieldOff } from "lucide-react";
 import { FormEvent, useState } from "react";
 import { Button } from "../components/ui/Button";
 import { TextInput } from "../components/ui/TextInput";
@@ -13,6 +13,7 @@ interface VerifyTicketPageProps {
 export function VerifyTicketPage({ onMessage }: VerifyTicketPageProps) {
   const [ticketId, setTicketId] = useState("");
   const [checking, setChecking] = useState(false);
+  const [deactivating, setDeactivating] = useState(false);
   const [result, setResult] = useState<VerifyTicketResult | null>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -32,6 +33,26 @@ export function VerifyTicketPage({ onMessage }: VerifyTicketPageProps) {
       onMessage(getErrorMessage(err), "error");
     } finally {
       setChecking(false);
+    }
+  }
+
+  async function handleDeactivate() {
+    const idToDeactivate = result?.ticketId || ticketId;
+
+    if (!idToDeactivate.trim()) {
+      return;
+    }
+
+    setDeactivating(true);
+
+    try {
+      const deactivation = await printerService.deactivateTicket(idToDeactivate);
+      setResult(deactivation);
+      onMessage(deactivation.message, deactivation.message.includes("sucesso") ? "success" : "error");
+    } catch (err) {
+      onMessage(getErrorMessage(err), "error");
+    } finally {
+      setDeactivating(false);
     }
   }
 
@@ -65,6 +86,19 @@ export function VerifyTicketPage({ onMessage }: VerifyTicketPageProps) {
         <section className={`verification-result ${result.valid ? "valid" : "invalid"}`}>
           <strong>{result.message}</strong>
           <span>ID consultado: {result.ticketId}</span>
+          {result.valid ? (
+            <div className="verification-actions">
+              <Button
+                type="button"
+                variant="danger"
+                icon={<ShieldOff size={18} />}
+                loading={deactivating}
+                onClick={handleDeactivate}
+              >
+                Desativar ticket
+              </Button>
+            </div>
+          ) : null}
         </section>
       ) : null}
     </section>

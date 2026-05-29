@@ -14,5 +14,11 @@ export const printerService = {
     return callCommand<VerifyTicketResult>("verify_ticket", {
       input: { ticketId }
     });
+  },
+
+  deactivateTicket(ticketId: string): Promise<VerifyTicketResult> {
+    return callCommand<VerifyTicketResult>("deactivate_ticket", {
+      input: { ticketId }
+    });
   }
 };

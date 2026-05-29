@@ -128,6 +128,29 @@ pub fn verify_ticket(
 }
 
 #[tauri::command]
+pub fn deactivate_ticket(
+    input: VerifyTicketInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<VerifyTicketResult> {
+    let ticket_id = input.ticket_id.trim().to_uppercase();
+    let deactivated = state
+        .database
+        .deactivate_ticket(&ticket_id)
+        .map_err(CommandError::from)?;
+    let message = if deactivated {
+        "Ticket desativado com sucesso. Ele não poderá ser utilizado novamente."
+    } else {
+        "Este ticket é inválido, ou passou da válidade."
+    };
+
+    Ok(VerifyTicketResult {
+        valid: false,
+        message: message.to_string(),
+        ticket_id,
+    })
+}
+
+#[tauri::command]
 pub fn get_all_mesas(state: State<'_, AppContext>) -> CommandResult<Vec<Mesa>> {
     state.database.get_all_mesas().map_err(CommandError::from)
 }

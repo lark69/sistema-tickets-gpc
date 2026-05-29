@@ -39,6 +39,7 @@ pub fn run() {
             commands::delete_product,
             commands::print_tickets,
             commands::verify_ticket,
+            commands::deactivate_ticket,
             commands::get_all_mesas,
             commands::create_mesa,
             commands::get_mesa_by_id,

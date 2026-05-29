@@ -921,6 +921,12 @@ button:disabled {
   border-left-color: var(--danger);
 }
 
+.verification-actions {
+  display: flex;
+  justify-content: flex-start;
+  padding-top: 8px;
+}
+
 .settings-section-title {
   display: grid;
   gap: 5px;
