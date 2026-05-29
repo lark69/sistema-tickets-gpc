@@ -1,4 +1,4 @@
-import { BadgeCheck, Gauge, Home, Settings } from "lucide-react";
+import { BadgeCheck, ClipboardList, Gauge, Package, Settings } from "lucide-react";
 import type { AppRoute } from "../../types";
 
 interface TopBarProps {
@@ -19,16 +19,24 @@ export function TopBar({ activeRoute, onNavigate }: TopBarProps) {
           className={activeRoute === "home" ? "active" : ""}
           onClick={() => onNavigate("home")}
         >
-          <Home size={18} />
-          <span>Home</span>
+          <Gauge size={18} />
+          <span>PDV</span>
         </button>
         <button
           type="button"
           className={activeRoute === "dashboard" ? "active" : ""}
           onClick={() => onNavigate("dashboard")}
         >
-          <Gauge size={18} />
-          <span>Dashboard</span>
+          <Package size={18} />
+          <span>Produtos</span>
+        </button>
+        <button
+          type="button"
+          className={activeRoute === "logs" ? "active" : ""}
+          onClick={() => onNavigate("logs")}
+        >
+          <ClipboardList size={18} />
+          <span>Logs</span>
         </button>
         <button
           type="button"

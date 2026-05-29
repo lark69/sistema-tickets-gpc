@@ -3,6 +3,8 @@ export type ThemeMode = "light" | "dark";
 export type AppRoute =
   | "home"
   | "dashboard"
+  | "tables"
+  | "logs"
   | "verify-ticket"
   | "settings"
   | "new-product"
@@ -76,4 +78,103 @@ export interface ProductFormState {
   name: string;
   price: string;
   description: string;
+}
+
+export type MesaStatus = "livre" | "ativa";
+export type FormaPagamento = "pix" | "dinheiro" | "debito" | "credito";
+
+export interface Mesa {
+  id: number;
+  numero: number;
+  capacidade?: number | null;
+  criadaEm: number;
+  status: MesaStatus;
+  tempoInicio?: number | null;
+}
+
+export interface MesaProdutoDetalhado {
+  id: number;
+  idMesa: number;
+  idProduto: number;
+  quantidade: number;
+  adicionadoEm: number;
+  produto: Product;
+  subtotalCents: number;
+}
+
+export interface MesaSessao {
+  id: number;
+  idMesa: number;
+  tempoInicio: number;
+  tempoFim?: number | null;
+  nomeCliente?: string | null;
+  formaPagamento?: FormaPagamento | null;
+  valorTotalCents?: number | null;
+  idUnico: string;
+}
+
+export interface MesaDetailed {
+  mesa: Mesa;
+  sessao?: MesaSessao | null;
+  produtos: MesaProdutoDetalhado[];
+  subtotalCents: number;
+}
+
+export interface MesaProdutoInput {
+  idMesa: number;
+  idProduto: number;
+  quantidade: number;
+}
+
+export interface SaveMesaInput {
+  idMesa: number;
+  nomeCliente?: string | null;
+  produtos: MesaProdutoInput[];
+}
+
+export interface FecharMesaInput {
+  idMesa: number;
+  formaPagamento: FormaPagamento;
+  valorPagoCents?: number | null;
+}
+
+export interface TicketProduto {
+  nome: string;
+  quantidade: number;
+  precoUnitCents: number;
+  subtotalCents: number;
+}
+
+export interface TicketData {
+  numeroMesa: number;
+  nomeCliente?: string | null;
+  tempoPermanencia: string;
+  idUnico: string;
+  formaPagamento: FormaPagamento;
+  subtotalCents: number;
+  acrescimoCents: number;
+  totalCents: number;
+  valorPagoCents?: number | null;
+  trocoCents?: number | null;
+  produtos: TicketProduto[];
+}
+
+export interface LogEntry {
+  id: number;
+  tipo: "ticket_gerado" | "mesa_fechada" | "produto_criado" | string;
+  numeroMesa?: number | null;
+  nomeCliente?: string | null;
+  valorTotalCents?: number | null;
+  formaPagamento?: FormaPagamento | null;
+  tempoPermanencia?: string | null;
+  listaProdutosJson?: string | null;
+  dataHora: number;
+  idMesaUnico?: string | null;
+}
+
+export interface LogFiltros {
+  tipo?: string | null;
+  numeroMesa?: number | null;
+  dataInicio?: number | null;
+  dataFim?: number | null;
 }

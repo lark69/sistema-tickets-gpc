@@ -1,5 +1,5 @@
 use crate::error::{AppError, AppResult};
-use crate::models::{AppConfig, IssuedTicket, PrintResult, PrinterInfo, Product};
+use crate::models::{AppConfig, IssuedTicket, PrintResult, PrinterInfo, Product, TicketData};
 use chrono::{Duration, Local};
 use serde::Deserialize;
 
@@ -48,6 +48,20 @@ pub fn list_printers() -> AppResult<Vec<PrinterInfo>> {
     platform_list_printers()
 }
 
+pub fn print_pdv_ticket(config: &AppConfig, ticket: &TicketData) -> AppResult<()> {
+    let printer_name = match config.printer_name.as_ref().filter(|value| !value.is_empty()) {
+        Some(name) => name.clone(),
+        None => default_printer_name()?.ok_or_else(|| {
+            AppError::Printer(
+                "Nenhuma impressora configurada. Selecione uma impressora nas configuracoes."
+                    .to_string(),
+            )
+        })?,
+    };
+    let payload = build_pdv_ticket_payload(config, ticket);
+    send_raw_to_printer(&printer_name, &payload)
+}
+
 fn build_ticket_payload(config: &AppConfig, product: &Product, ticket: &IssuedTicket) -> Vec<u8> {
     let width = config.print_width_chars.clamp(32, 64) as usize;
     let validity_label = timestamp_to_label(ticket.expires_at);
@@ -78,6 +92,87 @@ fn build_ticket_payload(config: &AppConfig, product: &Product, ticket: &IssuedTi
     push_line(&mut bytes, "");
     bytes.extend([GS, b'V', 66, 0]);
     bytes
+}
+
+fn build_pdv_ticket_payload(config: &AppConfig, ticket: &TicketData) -> Vec<u8> {
+    let width = config.print_width_chars.clamp(32, 64) as usize;
+    let mut bytes = Vec::new();
+
+    bytes.extend([ESC, b'@']);
+    bytes.extend([ESC, b'a', 1]);
+    bytes.extend([ESC, b'E', 1]);
+    push_line(&mut bytes, &config.company_name);
+    bytes.extend([ESC, b'E', 0]);
+    push_line(&mut bytes, &config.tax_id);
+    push_line(&mut bytes, "");
+    push_line(&mut bytes, &format!("Mesa {:02}", ticket.numero_mesa));
+    push_line(&mut bytes, &format!("ID: {}", ticket.id_unico));
+
+    if let Some(cliente) = &ticket.nome_cliente {
+        push_wrapped_line(&mut bytes, &format!("Cliente: {cliente}"), width);
+    }
+
+    push_line(&mut bytes, &format!("Tempo: {}", ticket.tempo_permanencia));
+    push_line(&mut bytes, "");
+    bytes.extend([ESC, b'a', 0]);
+    push_line(&mut bytes, &"-".repeat(width));
+
+    for item in &ticket.produtos {
+        push_wrapped_line(&mut bytes, &item.nome, width);
+        push_line(
+            &mut bytes,
+            &format!(
+                "x{}  {}  {}",
+                item.quantidade,
+                format_currency(item.preco_unit_cents),
+                format_currency(item.subtotal_cents)
+            ),
+        );
+    }
+
+    push_line(&mut bytes, &"-".repeat(width));
+    push_line(&mut bytes, &format!("Subtotal: {}", format_currency(ticket.subtotal_cents)));
+
+    if ticket.acrescimo_cents > 0 {
+        push_line(
+            &mut bytes,
+            &format!("Acrescimo: {}", format_currency(ticket.acrescimo_cents)),
+        );
+    }
+
+    bytes.extend([ESC, b'E', 1]);
+    push_line(&mut bytes, &format!("TOTAL: {}", format_currency(ticket.total_cents)));
+    bytes.extend([ESC, b'E', 0]);
+    push_line(&mut bytes, &format!("Pagamento: {}", payment_label(&ticket.forma_pagamento)));
+
+    if let Some(valor_pago) = ticket.valor_pago_cents {
+        push_line(&mut bytes, &format!("Valor pago: {}", format_currency(valor_pago)));
+    }
+
+    if let Some(troco) = ticket.troco_cents {
+        push_line(&mut bytes, &format!("Troco: {}", format_currency(troco)));
+    }
+
+    if let Some(message) = &config.thank_you_message {
+        push_line(&mut bytes, "");
+        bytes.extend([ESC, b'a', 1]);
+        push_wrapped_line(&mut bytes, message, width);
+    }
+
+    push_line(&mut bytes, "");
+    push_line(&mut bytes, "");
+    bytes.extend([GS, b'V', 66, 0]);
+    bytes
+}
+
+fn payment_label(value: &str) -> &'static str {
+    match value {
+        "pix" => "PIX",
+        "dinheiro" => "Dinheiro",
+        "debito" => "Debito",
+        "credito" => "Credito",
+        _ => "Pagamento",
+    }
 }
 
 fn timestamp_to_label(timestamp_millis: i64) -> String {

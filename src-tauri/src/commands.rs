@@ -2,7 +2,8 @@ use crate::error::{CommandError, CommandResult};
 use crate::models::{
     AppConfig, AppConfigInput, AppStatePayload, DeleteProductInput, PrintResult,
     PrintTicketsInput, PrinterInfo, Product, ProductInput, ProductUpdateInput, VerifyTicketInput,
-    VerifyTicketResult,
+    VerifyTicketResult, CreateMesaInput, Mesa, MesaDetailed, MesaProdutoDetalhado, MesaProdutoInput, MesaSessao,
+    SaveMesaInput, UpdateMesaClienteInput, FecharMesaInput, TicketData, LogEntry, LogFiltros,
 };
 use crate::{printer, AppContext};
 use tauri::State;
@@ -87,7 +88,10 @@ pub fn print_tickets(
         .collect::<Vec<_>>();
 
     match printer::print_tickets(&config, &product, &issued_tickets) {
-        Ok(result) => Ok(result),
+        Ok(result) => {
+            let _ = state.database.log_ticket_gerado(&product, result.printed);
+            Ok(result)
+        }
         Err(error) => {
             let _ = state.database.delete_issued_tickets(&ticket_ids);
             Err(CommandError::from(error))
@@ -121,6 +125,121 @@ pub fn verify_ticket(
         message: message.to_string(),
         ticket_id,
     })
+}
+
+#[tauri::command]
+pub fn get_all_mesas(state: State<'_, AppContext>) -> CommandResult<Vec<Mesa>> {
+    state.database.get_all_mesas().map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn create_mesa(input: CreateMesaInput, state: State<'_, AppContext>) -> CommandResult<Mesa> {
+    state.database.create_mesa(input).map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn get_mesa_by_id(id_mesa: i64, state: State<'_, AppContext>) -> CommandResult<Mesa> {
+    state.database.get_mesa_by_id(id_mesa).map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn get_mesa_details(
+    id_mesa: i64,
+    state: State<'_, AppContext>,
+) -> CommandResult<MesaDetailed> {
+    state
+        .database
+        .get_mesa_details(id_mesa)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn add_produto_to_mesa(
+    input: MesaProdutoInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<()> {
+    state
+        .database
+        .add_produto_to_mesa(input)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn remove_produto_from_mesa(
+    input: MesaProdutoInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<()> {
+    state
+        .database
+        .remove_produto_from_mesa(input)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn get_mesa_produtos(
+    id_mesa: i64,
+    state: State<'_, AppContext>,
+) -> CommandResult<Vec<MesaProdutoDetalhado>> {
+    state
+        .database
+        .get_mesa_produtos(id_mesa)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn save_mesa(
+    input: SaveMesaInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<MesaDetailed> {
+    state
+        .database
+        .replace_mesa_produtos(input.id_mesa, input.nome_cliente, input.produtos)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn update_mesa_cliente(
+    input: UpdateMesaClienteInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<()> {
+    state
+        .database
+        .update_mesa_cliente(input.id_mesa, input.nome_cliente)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn get_mesa_sessao(
+    id_mesa: i64,
+    state: State<'_, AppContext>,
+) -> CommandResult<MesaSessao> {
+    state
+        .database
+        .get_mesa_sessao(id_mesa)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn fechar_mesa(
+    input: FecharMesaInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<TicketData> {
+    let config = state.database.get_config().map_err(CommandError::from)?;
+    let ticket_data = state
+        .database
+        .fechar_mesa(input)
+        .map_err(CommandError::from)?;
+
+    printer::print_pdv_ticket(&config, &ticket_data).map_err(CommandError::from)?;
+    Ok(ticket_data)
+}
+
+#[tauri::command]
+pub fn get_logs(
+    filtros: Option<LogFiltros>,
+    state: State<'_, AppContext>,
+) -> CommandResult<Vec<LogEntry>> {
+    state.database.get_logs(filtros).map_err(CommandError::from)
 }
 
 #[tauri::command]

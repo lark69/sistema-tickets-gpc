@@ -7,7 +7,8 @@ import { useAppData } from "./hooks/useAppData";
 import { useTheme } from "./hooks/useTheme";
 import { InitialSetupPage } from "./pages/InitialSetupPage";
 import { DashboardPage } from "./pages/DashboardPage";
-import { HomePage } from "./pages/HomePage";
+import { LogsPage } from "./pages/LogsPage";
+import { MesasDashboardPage } from "./pages/MesasDashboardPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { VerifyTicketPage } from "./pages/VerifyTicketPage";
@@ -221,14 +222,14 @@ export function App() {
       return <VerifyTicketPage onMessage={showMessage} />;
     }
 
+    if (route === "logs") {
+      return <LogsPage onMessage={showMessage} />;
+    }
+
     return (
-      <HomePage
+      <MesasDashboardPage
         products={products}
-        onAdd={() => {
-          setEditingProduct(null);
-          setRoute("new-product");
-        }}
-        onPrint={setPrintProduct}
+        onMessage={showMessage}
       />
     );
   }, [config, editingProduct, products, route, saving]);

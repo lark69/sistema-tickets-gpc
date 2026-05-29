@@ -573,12 +573,232 @@ button:disabled {
 }
 
 .modal {
-  width: min(460px, 100%);
+  width: min(980px, 100%);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
   box-shadow: var(--shadow);
   animation: scaleIn 180ms ease both;
+}
+
+.mesas-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 14px;
+}
+
+.mesa-card {
+  position: relative;
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  min-height: 118px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.mesa-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--primary);
+  box-shadow: var(--shadow);
+}
+
+.mesa-card strong {
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.mesa-card span {
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.mesa-card em {
+  color: var(--primary);
+  font-style: normal;
+  font-weight: 800;
+}
+
+.mesa-status-dot {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--success);
+}
+
+.mesa-card-ativa .mesa-status-dot {
+  background: #f2b84b;
+}
+
+.mesa-card-ativa {
+  background: linear-gradient(180deg, rgba(242, 184, 75, 0.14), var(--surface));
+}
+
+.mesa-modal-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 22px;
+}
+
+.mesa-column {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.mesa-column h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.mesa-items,
+.catalog-list {
+  display: grid;
+  gap: 8px;
+  max-height: 360px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.mesa-item-row,
+.catalog-item,
+.checkout-row,
+.logs-row {
+  display: grid;
+  align-items: center;
+  gap: 10px;
+}
+
+.mesa-item-row {
+  grid-template-columns: minmax(0, 1.4fr) auto auto auto 34px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.mesa-item-row span:first-child,
+.catalog-item span {
+  overflow-wrap: anywhere;
+}
+
+.mesa-subtotal,
+.checkout-total {
+  color: var(--text);
+  font-size: 1.08rem;
+  font-weight: 850;
+}
+
+.muted-text {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.catalog-item {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  background: var(--surface-elevated);
+  text-align: left;
+}
+
+.catalog-item:hover {
+  border-color: var(--primary);
+}
+
+.catalog-item em {
+  display: grid;
+  place-items: center;
+  min-width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  color: #ffffff;
+  background: var(--primary);
+  font-style: normal;
+  font-weight: 800;
+}
+
+.checkout-content,
+.payment-modal-content {
+  display: grid;
+  gap: 18px;
+}
+
+.checkout-summary,
+.payment-breakdown {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.checkout-table {
+  display: grid;
+  gap: 8px;
+}
+
+.checkout-row {
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.payment-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.logs-filters {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(160px, 200px) auto;
+  align-items: end;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.logs-table {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.logs-row {
+  grid-template-columns: 180px 150px minmax(0, 1fr);
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.logs-row-head {
+  color: var(--text-muted);
+  background: var(--surface-muted);
+  font-size: 0.84rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.logs-empty {
+  padding: 24px;
+  color: var(--text-muted);
+  text-align: center;
 }
 
 .modal-header {
@@ -930,7 +1150,11 @@ button:disabled {
 
   .form-grid,
   .printer-row,
-  .verify-panel {
+  .verify-panel,
+  .mesa-modal-grid,
+  .payment-grid,
+  .logs-filters,
+  .logs-row {
     grid-template-columns: 1fr;
   }
 

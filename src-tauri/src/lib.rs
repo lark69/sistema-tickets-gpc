@@ -39,6 +39,18 @@ pub fn run() {
             commands::delete_product,
             commands::print_tickets,
             commands::verify_ticket,
+            commands::get_all_mesas,
+            commands::create_mesa,
+            commands::get_mesa_by_id,
+            commands::get_mesa_details,
+            commands::add_produto_to_mesa,
+            commands::remove_produto_from_mesa,
+            commands::get_mesa_produtos,
+            commands::save_mesa,
+            commands::update_mesa_cliente,
+            commands::get_mesa_sessao,
+            commands::fechar_mesa,
+            commands::get_logs,
             commands::list_printers,
             commands::open_creator_portfolio
         ])

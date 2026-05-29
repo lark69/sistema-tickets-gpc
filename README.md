@@ -1,8 +1,8 @@
 # Sistema de Tickets GPC
 
-Aplicativo desktop profissional para Windows, desenvolvido para cadastro de produtos, geração, impressão e validação de tickets térmicos para comércios.
+Aplicativo desktop profissional para Windows, desenvolvido como um PDV básico para controle de mesas, cadastro de produtos, fechamento de vendas, impressão e validação de tickets térmicos para comércios.
 
-O sistema foi criado com foco em desempenho, organização, segurança local e facilidade de uso. Ele permite que pequenos negócios cadastrem produtos, imprimam tickets térmicos compatíveis com a impressora **Elgin i8** e verifiquem a autenticidade de cada ticket por meio de um ID único.
+O sistema foi criado com foco em desempenho, organização, segurança local e facilidade de uso. Ele permite que pequenos negócios controlem até 40 mesas, adicionem produtos ao consumo, fechem pagamentos por PIX, dinheiro, débito ou crédito, imprimam tickets térmicos compatíveis com a impressora **Elgin i8** e mantenham logs locais de auditoria.
 
 ## Funcionalidades
 
@@ -11,6 +11,14 @@ O sistema foi criado com foco em desempenho, organização, segurança local e f
 - Exclusão de produtos
 - Pesquisa de produtos em tempo real
 - Dashboard com lista moderna de produtos
+- Dashboard PDV com 40 mesas
+- Modal de mesa com produtos adicionados e catálogo
+- Cronômetro de permanência por mesa
+- Checkout com PIX, dinheiro, débito e crédito
+- Cálculo de troco para dinheiro
+- Acréscimo automático de 5% para crédito
+- Logs de tickets, mesas fechadas e produtos criados
+- Exportação CSV de logs
 - Impressão térmica compatível com Elgin i8
 - Configuração dos dados da empresa
 - Tema claro e tema escuro
@@ -184,6 +192,10 @@ O aplicativo cria automaticamente um banco SQLite local com as tabelas:
 - `app_config`: configurações da empresa, tema, impressora e validade
 - `products`: produtos cadastrados
 - `issued_tickets`: tickets emitidos e validade dos IDs
+- `mesas`: cadastro local das 40 mesas
+- `mesa_produtos`: produtos adicionados em cada mesa
+- `mesa_sessao`: sessão ativa/fechada da mesa, cliente, pagamento e ID único
+- `logs`: auditoria de tickets, mesas fechadas e produtos criados
 
 ## Autor
 
