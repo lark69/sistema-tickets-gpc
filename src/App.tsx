@@ -6,16 +6,22 @@ import { Toast } from "./components/ui/Toast";
 import { useAppData } from "./hooks/useAppData";
 import { useTheme } from "./hooks/useTheme";
 import { InitialSetupPage } from "./pages/InitialSetupPage";
+import { CashRegisterPage } from "./pages/CashRegisterPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { InventoryPage } from "./pages/InventoryPage";
+import { LoginPage } from "./pages/LoginPage";
 import { LogsPage } from "./pages/LogsPage";
 import { MesasDashboardPage } from "./pages/MesasDashboardPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
+import { ReportsPage } from "./pages/ReportsPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { UsersPage } from "./pages/UsersPage";
 import { VerifyTicketPage } from "./pages/VerifyTicketPage";
+import { adminService } from "./services/adminService";
 import { configService } from "./services/configService";
 import { printerService } from "./services/printerService";
 import { productService } from "./services/productService";
-import type { AppConfig, AppRoute, Product, ProductInput, ToastState } from "./types";
+import type { AppConfig, AppRoute, Category, LocalUser, Product, ProductInput, ToastState } from "./types";
 import { getErrorMessage } from "./utils/errors";
 
 type ShellMode = "boot" | "onboarding" | "setup" | "app";
@@ -28,6 +34,8 @@ export function App() {
   const [printing, setPrinting] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [printProduct, setPrintProduct] = useState<Product | null>(null);
+  const [currentUser, setCurrentUser] = useState<LocalUser | null>(null);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [toast, setToast] = useState<ToastState | null>(null);
 
   useTheme(config.theme);
@@ -55,6 +63,52 @@ export function App() {
     setToast({ message, tone });
     window.setTimeout(() => setToast(null), 3800);
   }
+
+  useEffect(() => {
+    if (mode === "app") {
+      adminService.listCategories().then(setCategories).catch(() => undefined);
+    }
+  }, [mode]);
+
+  useEffect(() => {
+    if (mode !== "app" || !config.backupTime) {
+      return;
+    }
+
+    let running = false;
+    const runScheduledBackup = async () => {
+      if (running) return;
+
+      const now = new Date();
+      const currentTime = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+      const currentDate = now.toISOString().slice(0, 10);
+      const storageKey = "portex-pdv:last-backup-date";
+
+      if (currentTime !== config.backupTime || window.localStorage.getItem(storageKey) === currentDate) {
+        return;
+      }
+
+      running = true;
+      window.localStorage.setItem(storageKey, currentDate);
+
+      try {
+        await adminService.backupDatabase();
+        showMessage("Backup automatico concluido.", "success");
+      } catch (err) {
+        window.localStorage.removeItem(storageKey);
+        showMessage(getErrorMessage(err), "error");
+      } finally {
+        running = false;
+      }
+    };
+
+    runScheduledBackup().catch(() => undefined);
+    const interval = window.setInterval(() => {
+      runScheduledBackup().catch(() => undefined);
+    }, 60_000);
+
+    return () => window.clearInterval(interval);
+  }, [config.backupTime, mode]);
 
   async function handleFinishOnboarding() {
     setSaving(true);
@@ -165,6 +219,10 @@ export function App() {
     if (route === "new-product") {
       return (
         <ProductForm
+          categories={categories}
+          operatorName={currentUser?.username}
+          onCategoryCreated={(category) => setCategories((current) => [...current, category])}
+          onMessage={showMessage}
           saving={saving}
           onSubmit={handleSaveProduct}
           onCancel={() => {
@@ -179,6 +237,10 @@ export function App() {
       return (
         <ProductForm
           product={editingProduct}
+          categories={categories}
+          operatorName={currentUser?.username}
+          onCategoryCreated={(category) => setCategories((current) => [...current, category])}
+          onMessage={showMessage}
           saving={saving}
           onSubmit={handleSaveProduct}
           onCancel={() => {
@@ -193,6 +255,7 @@ export function App() {
       return (
         <DashboardPage
           products={products}
+          canManage={currentUser?.role === "admin"}
           onAdd={() => {
             setEditingProduct(null);
             setRoute("new-product");
@@ -226,13 +289,45 @@ export function App() {
       return <LogsPage onMessage={showMessage} />;
     }
 
+    if (route === "cash" && currentUser) {
+      return <CashRegisterPage currentUser={currentUser} onMessage={showMessage} />;
+    }
+
+    if (route === "inventory" && currentUser) {
+      return (
+        <InventoryPage
+          products={products}
+          currentUser={currentUser}
+          onRefresh={async () => {
+            await refreshProducts();
+          }}
+          onMessage={showMessage}
+        />
+      );
+    }
+
+    if (route === "reports") {
+      return <ReportsPage onMessage={showMessage} />;
+    }
+
+    if (route === "users") {
+      if (currentUser?.role !== "admin") {
+        return <section className="empty-state"><h2>Acesso restrito ao administrador.</h2></section>;
+      }
+      return <UsersPage onMessage={showMessage} />;
+    }
+
     return (
       <MesasDashboardPage
         products={products}
+        operatorName={currentUser?.username ?? "caixa"}
+        onProductsChanged={async () => {
+          await refreshProducts();
+        }}
         onMessage={showMessage}
       />
     );
-  }, [config, editingProduct, products, route, saving]);
+  }, [categories, config, currentUser, editingProduct, products, route, saving]);
 
   const topbarRoute: AppRoute =
     route === "new-product" || route === "edit-product" ? "dashboard" : route;
@@ -241,8 +336,8 @@ export function App() {
     return (
       <main className="boot-screen">
         <div className="boot-card">
-          <span className="brand-symbol">GPC</span>
-          <strong>Sistema de Tickets GPC</strong>
+          <span className="brand-symbol">PDV</span>
+          <strong>Portex PDV</strong>
           <p>{error ?? "Carregando dados locais..."}</p>
         </div>
       </main>
@@ -255,8 +350,10 @@ export function App() {
         <OnboardingPage saving={saving} onFinish={handleFinishOnboarding} />
       ) : mode === "setup" ? (
         <InitialSetupPage config={config} saving={saving} onSave={handleInitialSetup} />
+      ) : !currentUser ? (
+        <LoginPage onLogin={setCurrentUser} onMessage={showMessage} />
       ) : (
-        <AppLayout route={topbarRoute} onNavigate={setRoute}>
+        <AppLayout route={topbarRoute} showUsers={currentUser.role === "admin"} onNavigate={setRoute}>
           {content}
         </AppLayout>
       )}

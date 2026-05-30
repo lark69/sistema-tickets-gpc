@@ -12,10 +12,17 @@ interface DraftItem {
 
 interface MesasDashboardPageProps {
   products: Product[];
+  operatorName: string;
+  onProductsChanged: () => Promise<void>;
   onMessage: (message: string, tone: "success" | "error" | "info") => void;
 }
 
-export function MesasDashboardPage({ products, onMessage }: MesasDashboardPageProps) {
+export function MesasDashboardPage({
+  products,
+  operatorName,
+  onProductsChanged,
+  onMessage
+}: MesasDashboardPageProps) {
   const [mesas, setMesas] = useState<Mesa[]>([]);
   const [details, setDetails] = useState<MesaDetailed | null>(null);
   const [loading, setLoading] = useState(true);
@@ -89,10 +96,12 @@ export function MesasDashboardPage({ products, onMessage }: MesasDashboardPagePr
       const ticket = await mesaService.fecharMesa({
         idMesa: details.mesa.id,
         formaPagamento,
-        valorPagoCents
+        valorPagoCents,
+        operatorName
       });
       setDetails(null);
       await loadMesas();
+      await onProductsChanged();
       onMessage(`Mesa ${String(ticket.numeroMesa).padStart(2, "0")} fechada com sucesso.`, "success");
     } catch (err) {
       onMessage(getErrorMessage(err), "error");

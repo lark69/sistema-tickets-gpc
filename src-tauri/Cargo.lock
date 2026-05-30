@@ -2259,6 +2259,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "portex_pdv"
+version = "1.0.0"
+dependencies = [
+ "chrono",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+]
+
+[[package]]
 name = "potential_utf"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2806,18 +2818,6 @@ name = "siphasher"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
-
-[[package]]
-name = "sistema_tickets_gpc"
-version = "1.0.0"
-dependencies = [
- "chrono",
- "rusqlite",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
-]
 
 [[package]]
 name = "slab"

@@ -122,9 +122,8 @@ fn build_pdv_ticket_payload(config: &AppConfig, ticket: &TicketData) -> Vec<u8> 
         push_line(
             &mut bytes,
             &format!(
-                "x{}  {}  {}",
+                "x{}  {}",
                 item.quantidade,
-                format_currency(item.preco_unit_cents),
                 format_currency(item.subtotal_cents)
             ),
         );
@@ -336,7 +335,7 @@ fn send_raw_to_printer(printer_name: &str, payload: &[u8]) -> AppResult<()> {
             )));
         }
 
-        let mut doc_name = to_wide("Sistema de Tickets GPC");
+        let mut doc_name = to_wide("Portex PDV");
         let mut data_type = to_wide("RAW");
         let doc_info = DocInfo1W {
             p_doc_name: doc_name.as_mut_ptr(),

@@ -9,6 +9,7 @@ import type { Product } from "../types";
 
 interface DashboardPageProps {
   products: Product[];
+  canManage?: boolean;
   onAdd: () => void;
   onEdit: (product: Product) => void;
   onDelete: (product: Product) => void;
@@ -17,6 +18,7 @@ interface DashboardPageProps {
 
 export function DashboardPage({
   products,
+  canManage = true,
   onAdd,
   onEdit,
   onDelete,
@@ -46,9 +48,11 @@ export function DashboardPage({
           <h1>Gestao de produtos</h1>
           <p>Pesquise, edite, exclua e imprima tickets a partir da sua lista local.</p>
         </div>
-        <Button icon={<Plus size={18} />} onClick={onAdd}>
-          Novo produto
-        </Button>
+        {canManage ? (
+          <Button icon={<Plus size={18} />} onClick={onAdd}>
+            Novo produto
+          </Button>
+        ) : null}
       </div>
 
       <div className="toolbar">
@@ -65,9 +69,11 @@ export function DashboardPage({
         <EmptyState
           title="Você ainda não tem nenhum produto adicionado. ;-("
           action={
-            <Button icon={<Plus size={18} />} onClick={onAdd}>
-              Adicionar produtos
-            </Button>
+            canManage ? (
+              <Button icon={<Plus size={18} />} onClick={onAdd}>
+                Adicionar produtos
+              </Button>
+            ) : null
           }
         />
       ) : filteredProducts.length === 0 ? (
@@ -78,8 +84,8 @@ export function DashboardPage({
             <ProductCard
               key={product.id}
               product={product}
-              onEdit={onEdit}
-              onDelete={onDelete}
+              onEdit={canManage ? onEdit : undefined}
+              onDelete={canManage ? onDelete : undefined}
               onPrint={onPrint}
             />
           ))}

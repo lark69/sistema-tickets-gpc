@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Sistema de Tickets GPC",
+  "productName": "Portex PDV",
   "version": "1.0.0",
-  "identifier": "com.gpc.sistematickets",
+  "identifier": "com.portex.pdv",
   "build": {
     "beforeDevCommand": "npm run dev:web",
     "beforeBuildCommand": "npm run build:web",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Sistema de Tickets GPC",
+        "title": "Portex PDV",
         "width": 1180,
         "height": 760,
         "minWidth": 960,

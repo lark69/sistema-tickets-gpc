@@ -10,6 +10,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   printWidthChars: 48,
   onboardingCompleted: false,
   setupCompleted: false,
+  tableCount: 40,
+  backupTime: "23:00",
   updatedAt: Date.now()
 };
 

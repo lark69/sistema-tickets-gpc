@@ -1,12 +1,16 @@
 use crate::error::{CommandError, CommandResult};
 use crate::models::{
-    AppConfig, AppConfigInput, AppStatePayload, DeleteProductInput, PrintResult,
-    PrintTicketsInput, PrinterInfo, Product, ProductInput, ProductUpdateInput, VerifyTicketInput,
-    VerifyTicketResult, CreateMesaInput, Mesa, MesaDetailed, MesaProdutoDetalhado, MesaProdutoInput, MesaSessao,
-    SaveMesaInput, UpdateMesaClienteInput, FecharMesaInput, TicketData, LogEntry, LogFiltros,
+    AppConfig, AppConfigInput, AppStatePayload, AuthPayload, BackupResult, CashMovement,
+    CashMovementInput, CashRegister, Category, CategoryInput, CloseCashRegisterInput,
+    CreateMesaInput, CreateUserInput, DeleteProductInput, ExportCsvInput, ExportCsvResult,
+    FecharMesaInput, LocalUser, LogEntry, LogFiltros, LoginInput, Mesa, MesaDetailed,
+    MesaProdutoDetalhado, MesaProdutoInput, MesaSessao, OpenCashRegisterInput, PrintResult,
+    PrintTicketsInput, PrinterInfo, Product, ProductInput, ProductUpdateInput, ReportsPayload,
+    SaveMesaInput, StockAdjustInput, StockMovement, TicketData, UpdateMesaClienteInput,
+    VerifyTicketInput, VerifyTicketResult,
 };
 use crate::{printer, AppContext};
-use tauri::State;
+use tauri::{Manager, State};
 
 #[tauri::command]
 pub fn get_app_state(state: State<'_, AppContext>) -> CommandResult<AppStatePayload> {
@@ -65,6 +69,39 @@ pub fn delete_product(input: DeleteProductInput, state: State<'_, AppContext>) -
 }
 
 #[tauri::command]
+pub fn list_categories(state: State<'_, AppContext>) -> CommandResult<Vec<Category>> {
+    state.database.list_categories().map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn create_category(
+    input: CategoryInput,
+    operator_name: Option<String>,
+    state: State<'_, AppContext>,
+) -> CommandResult<Category> {
+    state
+        .database
+        .create_category(input, operator_name)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn adjust_stock(
+    input: StockAdjustInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<StockMovement> {
+    state.database.adjust_stock(input).map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn list_stock_movements(state: State<'_, AppContext>) -> CommandResult<Vec<StockMovement>> {
+    state
+        .database
+        .list_stock_movements()
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
 pub fn print_tickets(
     input: PrintTicketsInput,
     state: State<'_, AppContext>,
@@ -115,7 +152,7 @@ pub fn verify_ticket(
         .verify_ticket(&ticket_id)
         .map_err(CommandError::from)?;
     let message = if valid {
-        "Este ticket é válido e foi impresso usano o Sistema de Tickets GPC"
+        "Este ticket é válido e foi impresso usando o Portex PDV"
     } else {
         "Este ticket é inválido, ou passou da válidade."
     };
@@ -266,6 +303,144 @@ pub fn get_logs(
 }
 
 #[tauri::command]
+pub fn login(input: LoginInput, state: State<'_, AppContext>) -> CommandResult<AuthPayload> {
+    state.database.login(input).map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn list_users(state: State<'_, AppContext>) -> CommandResult<Vec<LocalUser>> {
+    state.database.list_users().map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn create_user(input: CreateUserInput, state: State<'_, AppContext>) -> CommandResult<LocalUser> {
+    state.database.create_user(input).map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn get_current_cash_register(
+    state: State<'_, AppContext>,
+) -> CommandResult<Option<CashRegister>> {
+    state
+        .database
+        .get_current_cash_register()
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn open_cash_register(
+    input: OpenCashRegisterInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<CashRegister> {
+    state
+        .database
+        .open_cash_register(input)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn close_cash_register(
+    input: CloseCashRegisterInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<CashRegister> {
+    state
+        .database
+        .close_cash_register(input)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn add_cash_movement(
+    input: CashMovementInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<CashMovement> {
+    state
+        .database
+        .add_cash_movement(input)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn list_cash_movements(state: State<'_, AppContext>) -> CommandResult<Vec<CashMovement>> {
+    state
+        .database
+        .list_cash_movements()
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn get_reports(state: State<'_, AppContext>) -> CommandResult<ReportsPayload> {
+    state.database.get_reports().map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn backup_database(app: tauri::AppHandle) -> CommandResult<BackupResult> {
+    let app_data = app.path().app_data_dir().map_err(|error| {
+        CommandError::from(crate::error::AppError::Io(format!(
+            "Nao foi possivel localizar o banco de dados: {error}"
+        )))
+    })?;
+    let source = app_data.join("portex_pdv.sqlite");
+    let backup_dir = app
+        .path()
+        .download_dir()
+        .unwrap_or(app_data)
+        .join("portex-pdv-backups");
+    std::fs::create_dir_all(&backup_dir).map_err(|error| {
+        CommandError::from(crate::error::AppError::Io(format!(
+            "Nao foi possivel criar a pasta de backup: {error}"
+        )))
+    })?;
+    let filename = format!("portex-pdv-backup-{}.sqlite", chrono_like_timestamp());
+    let destination = backup_dir.join(filename);
+    std::fs::copy(&source, &destination).map_err(|error| {
+        CommandError::from(crate::error::AppError::Io(format!(
+            "Nao foi possivel copiar o banco de dados: {error}"
+        )))
+    })?;
+    Ok(BackupResult {
+        path: destination.to_string_lossy().to_string(),
+    })
+}
+
+#[tauri::command]
+pub fn export_csv(app: tauri::AppHandle, input: ExportCsvInput) -> CommandResult<ExportCsvResult> {
+    let safe_filename = input
+        .filename
+        .chars()
+        .map(|character| match character {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' => character,
+            _ => '_',
+        })
+        .collect::<String>();
+    let filename = if safe_filename.ends_with(".csv") {
+        safe_filename
+    } else {
+        format!("{safe_filename}.csv")
+    };
+    let base_dir = app
+        .path()
+        .download_dir()
+        .or_else(|_| app.path().app_data_dir())
+        .map_err(|error| {
+            CommandError::from(crate::error::AppError::Io(format!(
+                "Nao foi possivel localizar uma pasta para exportar: {error}"
+            )))
+        })?;
+    let path = base_dir.join(filename);
+
+    std::fs::write(&path, input.content).map_err(|error| {
+        CommandError::from(crate::error::AppError::Io(format!(
+            "Nao foi possivel salvar o CSV: {error}"
+        )))
+    })?;
+
+    Ok(ExportCsvResult {
+        path: path.to_string_lossy().to_string(),
+    })
+}
+
+#[tauri::command]
 pub fn open_creator_portfolio() -> CommandResult<()> {
     open_external_url("https://lark69.github.io/Gabriel-Portela-Portfolio/").map_err(|error| {
         CommandError::from(crate::error::AppError::System(format!(
@@ -274,6 +449,14 @@ pub fn open_creator_portfolio() -> CommandResult<()> {
     })?;
 
     Ok(())
+}
+
+fn chrono_like_timestamp() -> String {
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    seconds.to_string()
 }
 
 #[cfg(target_os = "windows")]

@@ -5,7 +5,7 @@ import { Button } from "../components/ui/Button";
 const slides = [
   {
     icon: Ticket,
-    title: "Bem-vindo ao Sistema de Tickets GPC",
+    title: "Bem-vindo ao Portex PDV",
     text: "Organize produtos e imprima tickets térmicos com uma experiência simples, rápida e profissional."
   },
   {
@@ -50,8 +50,8 @@ export function OnboardingPage({ saving, onFinish }: OnboardingPageProps) {
     <main className="onboarding-screen">
       <section className="onboarding-panel">
         <div className="onboarding-brand">
-          <span className="brand-symbol">GPC</span>
-          <strong>Sistema de Tickets GPC</strong>
+          <span className="brand-symbol">PDV</span>
+          <strong>Portex PDV</strong>
         </div>
 
         <div className="slide-frame" key={slide.title}>

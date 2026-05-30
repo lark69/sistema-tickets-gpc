@@ -160,9 +160,15 @@ export function MesaModal({
               {filteredProducts.map((product) => {
                 const quantity = quantityFor(product.id);
                 return (
-                  <button key={product.id} type="button" className="catalog-item" onClick={() => addProduct(product)}>
+                  <button
+                    key={product.id}
+                    type="button"
+                    className={`catalog-item ${product.stock <= quantity ? "catalog-item-warning" : ""}`}
+                    onClick={() => addProduct(product)}
+                  >
                     <span>{product.name}</span>
                     <strong>{formatCurrency(product.priceCents)}</strong>
+                    {product.stock <= quantity ? <small>Estoque negativo</small> : null}
                     {quantity > 0 ? <em>{quantity}</em> : null}
                   </button>
                 );

@@ -1,24 +1,34 @@
-# Sistema de Tickets GPC
+# Portex PDV
 
 Aplicativo desktop profissional para Windows, desenvolvido como um PDV básico para controle de mesas, cadastro de produtos, fechamento de vendas, impressão e validação de tickets térmicos para comércios.
 
-O sistema foi criado com foco em desempenho, organização, segurança local e facilidade de uso. Ele permite que pequenos negócios controlem até 40 mesas, adicionem produtos ao consumo, fechem pagamentos por PIX, dinheiro, débito ou crédito, imprimam tickets térmicos compatíveis com a impressora **Elgin i8** e mantenham logs locais de auditoria.
+O sistema foi criado com foco em desempenho, organização, segurança local e facilidade de uso. Ele permite que pequenos negócios controlem até 100 mesas, adicionem produtos ao consumo, fechem pagamentos por PIX, dinheiro, débito ou crédito, controlem caixa e estoque, imprimam tickets térmicos compatíveis com a impressora **Elgin i8** e mantenham logs locais de auditoria.
 
 ## Funcionalidades
 
+- Login local com perfis Admin e Operador/Caixa
+- Abertura e fechamento de caixa
+- Registro de sangria e suprimento
 - Cadastro de produtos
 - Edição de produtos
 - Exclusão de produtos
+- Categorias de produtos
+- Código de barras, custo, unidade e estoque por produto
+- Cálculo de preço por custo + markup
+- Entrada, saída e ajuste manual de estoque
+- Alerta de estoque baixo e estoque negativo
 - Pesquisa de produtos em tempo real
 - Dashboard com lista moderna de produtos
-- Dashboard PDV com 40 mesas
+- Dashboard PDV com quantidade configurável de mesas
 - Modal de mesa com produtos adicionados e catálogo
 - Cronômetro de permanência por mesa
 - Checkout com PIX, dinheiro, débito e crédito
 - Cálculo de troco para dinheiro
 - Acréscimo automático de 5% para crédito
-- Logs de tickets, mesas fechadas e produtos criados
+- Relatórios de vendas, lucro estimado, produtos mais vendidos e estoque baixo
+- Logs de tickets, mesas fechadas, categorias e produtos
 - Exportação CSV de logs
+- Backup manual e backup automático enquanto o app estiver aberto
 - Impressão térmica compatível com Elgin i8
 - Configuração dos dados da empresa
 - Tema claro e tema escuro
@@ -44,7 +54,7 @@ Esse ID é salvo localmente no banco SQLite junto com a data de validade configu
 Na tela **Verificar**, o usuário pode digitar o ID impresso no ticket. O sistema consulta o banco local e retorna:
 
 ```text
-Este ticket é válido e foi impresso usano o Sistema de Tickets GPC
+Este ticket é válido e foi impresso usando o Portex PDV
 ```
 
 ou:
@@ -133,6 +143,15 @@ npm run dev
 
 O aplicativo será aberto em uma janela desktop do Tauri.
 
+Na primeira instalação com banco novo, o usuário local padrão é:
+
+```text
+Usuário: admin
+Senha: admin
+```
+
+Depois de entrar, crie usuários definitivos em **Usuários**.
+
 ## Gerar Instalador .exe
 
 ```powershell
@@ -148,7 +167,7 @@ src-tauri/target/release/bundle/nsis/
 O executável direto será gerado em:
 
 ```text
-src-tauri/target/release/sistema_tickets_gpc.exe
+src-tauri/target/release/portex_pdv.exe
 ```
 
 Também é possível usar o arquivo:
@@ -165,7 +184,7 @@ Basta dar dois cliques nele para iniciar o processo de build.
 2. Execute o arquivo:
 
 ```text
-Sistema de Tickets GPC_1.0.0_x64-setup.exe
+Portex PDV_1.0.0_x64-setup.exe
 ```
 
 3. Siga as etapas do instalador.
@@ -173,11 +192,33 @@ Sistema de Tickets GPC_1.0.0_x64-setup.exe
 
 O usuário final não precisa instalar Node.js, Rust ou abrir PowerShell.
 
+## Backup Automático
+
+O aplicativo possui backup manual em **Relatórios** e backup automático interno enquanto o Portex PDV estiver aberto.
+
+Para criar um backup diário mesmo com o aplicativo fechado, execute:
+
+```text
+CRIAR_BACKUP_AGENDADO.bat
+```
+
+Por padrão, a tarefa roda às 23:00. Para escolher outro horário, execute pelo Prompt:
+
+```bat
+CRIAR_BACKUP_AGENDADO.bat 21:30
+```
+
+Os arquivos serão salvos em:
+
+```text
+Downloads\portex-pdv-backups
+```
+
 ## Configurar Impressora Elgin i8
 
 1. Instale o driver oficial da Elgin i8 no Windows.
 2. Conecte a impressora por USB ou rede.
-3. Abra o Sistema de Tickets GPC.
+3. Abra o Portex PDV.
 4. Vá em **Configurações**.
 5. Na área **Impressora**, clique em **Atualizar**.
 6. Selecione a Elgin i8.
@@ -189,13 +230,19 @@ O usuário final não precisa instalar Node.js, Rust ou abrir PowerShell.
 
 O aplicativo cria automaticamente um banco SQLite local com as tabelas:
 
-- `app_config`: configurações da empresa, tema, impressora e validade
-- `products`: produtos cadastrados
+- `app_config`: configurações da empresa, tema, impressora, validade, mesas e backup
+- `products`: produtos cadastrados, estoque, custo, categoria e código de barras
+- `categories`: categorias dos produtos
 - `issued_tickets`: tickets emitidos e validade dos IDs
-- `mesas`: cadastro local das 40 mesas
+- `mesas`: cadastro local das mesas
 - `mesa_produtos`: produtos adicionados em cada mesa
 - `mesa_sessao`: sessão ativa/fechada da mesa, cliente, pagamento e ID único
 - `logs`: auditoria de tickets, mesas fechadas e produtos criados
+- `cash_registers`: sessões de caixa
+- `cash_movements`: sangrias e suprimentos
+- `stock_movements`: histórico de ajustes de estoque
+- `sales` e `sale_items`: vendas e itens vendidos
+- `users`: usuários locais e perfis
 
 ## Autor
 

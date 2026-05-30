@@ -20,7 +20,9 @@ export const configService = {
         theme: config.theme,
         printerName: config.printerName || null,
         printWidthChars: config.printWidthChars,
-        setupCompleted: config.setupCompleted
+        setupCompleted: config.setupCompleted,
+        tableCount: config.tableCount,
+        backupTime: config.backupTime || null
       }
     });
   },

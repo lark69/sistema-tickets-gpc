@@ -14,6 +14,10 @@ export function validateProductForm(form: ProductFormState): string | null {
     return "Informe um valor maior que zero.";
   }
 
+  if (currencyToCents(form.costPrice) < 0) {
+    return "O custo não pode ser negativo.";
+  }
+
   return null;
 }
 
@@ -32,6 +36,10 @@ export function validateConfig(config: AppConfig): string | null {
 
   if (config.printWidthChars < 32 || config.printWidthChars > 64) {
     return "A largura deve ficar entre 32 e 64 caracteres.";
+  }
+
+  if (config.tableCount < 1 || config.tableCount > 100) {
+    return "A quantidade de mesas deve ficar entre 1 e 100.";
   }
 
   return null;

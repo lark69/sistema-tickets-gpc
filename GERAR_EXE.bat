@@ -4,7 +4,7 @@ cd /d "%~dp0"
 
 echo.
 echo ============================================
-echo  Gerando instalador do Sistema de Tickets GPC
+echo  Gerando instalador do Portex PDV
 echo ============================================
 echo.
 

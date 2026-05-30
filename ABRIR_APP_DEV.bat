@@ -4,7 +4,7 @@ cd /d "%~dp0"
 
 echo.
 echo ============================================
-echo  Abrindo Sistema de Tickets GPC em modo dev
+echo  Abrindo Portex PDV em modo dev
 echo ============================================
 echo.
 

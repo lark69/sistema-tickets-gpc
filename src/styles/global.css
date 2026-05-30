@@ -513,11 +513,30 @@ button:disabled {
   font-size: 1.08rem;
 }
 
+.product-card.stock-low {
+  border-color: rgba(183, 121, 31, 0.45);
+  background:
+    linear-gradient(90deg, rgba(183, 121, 31, 0.1), transparent 38%),
+    var(--surface);
+}
+
+.danger-text {
+  color: var(--danger) !important;
+  font-weight: 750;
+}
+
 .product-card-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.category-create-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
 }
 
 .empty-state {
@@ -702,7 +721,7 @@ button:disabled {
 }
 
 .catalog-item {
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   min-height: 48px;
   padding: 10px 12px;
   border: 1px solid var(--border);
@@ -714,6 +733,16 @@ button:disabled {
 
 .catalog-item:hover {
   border-color: var(--primary);
+}
+
+.catalog-item-warning {
+  border-color: rgba(211, 63, 73, 0.42);
+}
+
+.catalog-item small {
+  color: var(--danger);
+  font-size: 0.76rem;
+  font-weight: 750;
 }
 
 .catalog-item em {
@@ -880,6 +909,12 @@ button:disabled {
   display: grid;
   gap: 18px;
   padding: 22px;
+}
+
+.report-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
 }
 
 .verify-page {
@@ -1155,6 +1190,8 @@ button:disabled {
   }
 
   .form-grid,
+  .category-create-row,
+  .report-cards,
   .printer-row,
   .verify-panel,
   .mesa-modal-grid,

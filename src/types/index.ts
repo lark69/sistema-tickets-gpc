@@ -5,6 +5,10 @@ export type AppRoute =
   | "dashboard"
   | "tables"
   | "logs"
+  | "cash"
+  | "inventory"
+  | "reports"
+  | "users"
   | "verify-ticket"
   | "settings"
   | "new-product"
@@ -20,6 +24,8 @@ export interface AppConfig {
   printWidthChars: number;
   onboardingCompleted: boolean;
   setupCompleted: boolean;
+  tableCount: number;
+  backupTime?: string | null;
   updatedAt: number;
 }
 
@@ -32,14 +38,35 @@ export interface Product {
   id: number;
   name: string;
   priceCents: number;
+  barcode?: string | null;
+  costPriceCents: number;
+  unit: ProductUnit;
+  categoryId?: number | null;
+  categoryName?: string | null;
+  stock: number;
+  reorderLevel: number;
   description?: string | null;
   createdAt: number;
   updatedAt: number;
 }
 
+export type ProductUnit = "UN" | "KG" | "L" | "CX" | "PCT";
+
+export interface Category {
+  id: number;
+  name: string;
+  createdAt: number;
+}
+
 export interface ProductInput {
   name: string;
   priceCents: number;
+  barcode?: string | null;
+  costPriceCents: number;
+  unit: ProductUnit;
+  categoryId?: number | null;
+  stock: number;
+  reorderLevel: number;
   description?: string | null;
 }
 
@@ -77,6 +104,13 @@ export interface ToastState {
 export interface ProductFormState {
   name: string;
   price: string;
+  barcode: string;
+  costPrice: string;
+  markupPercent: string;
+  unit: ProductUnit;
+  categoryId: string;
+  stock: string;
+  reorderLevel: string;
   description: string;
 }
 
@@ -136,6 +170,7 @@ export interface FecharMesaInput {
   idMesa: number;
   formaPagamento: FormaPagamento;
   valorPagoCents?: number | null;
+  operatorName?: string | null;
 }
 
 export interface TicketProduto {
@@ -177,4 +212,66 @@ export interface LogFiltros {
   numeroMesa?: number | null;
   dataInicio?: number | null;
   dataFim?: number | null;
+}
+
+export interface ExportCsvResult {
+  path: string;
+}
+
+export interface LocalUser {
+  id: number;
+  username: string;
+  role: "admin" | "operator";
+  active: boolean;
+  createdAt: number;
+}
+
+export interface AuthPayload {
+  user: LocalUser;
+}
+
+export interface CashRegister {
+  id: number;
+  openedAt: number;
+  closedAt?: number | null;
+  initialBalanceCents: number;
+  finalCountedCents?: number | null;
+  expectedBalanceCents: number;
+  differenceCents?: number | null;
+  operatorName: string;
+}
+
+export interface CashMovement {
+  id: number;
+  cashRegisterId: number;
+  movementType: "sangria" | "suprimento" | string;
+  amountCents: number;
+  note?: string | null;
+  operatorName: string;
+  createdAt: number;
+}
+
+export interface StockMovement {
+  id: number;
+  productId: number;
+  productName: string;
+  movementType: string;
+  quantity: number;
+  previousStock: number;
+  newStock: number;
+  operatorName: string;
+  note?: string | null;
+  createdAt: number;
+}
+
+export interface ReportsPayload {
+  totalRevenueCents: number;
+  estimatedProfitCents: number;
+  salesByDay: Array<{ dateLabel: string; totalCents: number }>;
+  topProducts: Array<{ productName: string; quantity: number; totalCents: number }>;
+  lowStockProducts: Product[];
+}
+
+export interface BackupResult {
+  path: string;
 }

@@ -48,7 +48,7 @@ export function InitialSetupPage({ config, saving, onSave }: InitialSetupPagePro
             onChange={(event) =>
               setDraft((current) => ({ ...current, companyName: event.target.value }))
             }
-            placeholder="Ex: GPC Comercio"
+            placeholder="Ex: Portex Comercio"
             autoFocus
           />
 

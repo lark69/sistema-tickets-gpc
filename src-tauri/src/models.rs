@@ -19,6 +19,8 @@ pub struct AppConfig {
     pub print_width_chars: i64,
     pub onboarding_completed: bool,
     pub setup_completed: bool,
+    pub table_count: i64,
+    pub backup_time: Option<String>,
     pub updated_at: i64,
 }
 
@@ -33,6 +35,22 @@ pub struct AppConfigInput {
     pub printer_name: Option<String>,
     pub print_width_chars: i64,
     pub setup_completed: bool,
+    pub table_count: i64,
+    pub backup_time: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Category {
+    pub id: i64,
+    pub name: String,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CategoryInput {
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -41,6 +59,13 @@ pub struct Product {
     pub id: i64,
     pub name: String,
     pub price_cents: i64,
+    pub barcode: Option<String>,
+    pub cost_price_cents: i64,
+    pub unit: String,
+    pub category_id: Option<i64>,
+    pub category_name: Option<String>,
+    pub stock: i64,
+    pub reorder_level: i64,
     pub description: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
@@ -51,6 +76,12 @@ pub struct Product {
 pub struct ProductInput {
     pub name: String,
     pub price_cents: i64,
+    pub barcode: Option<String>,
+    pub cost_price_cents: i64,
+    pub unit: String,
+    pub category_id: Option<i64>,
+    pub stock: i64,
+    pub reorder_level: i64,
     pub description: Option<String>,
 }
 
@@ -60,6 +91,12 @@ pub struct ProductUpdateInput {
     pub id: i64,
     pub name: String,
     pub price_cents: i64,
+    pub barcode: Option<String>,
+    pub cost_price_cents: i64,
+    pub unit: String,
+    pub category_id: Option<i64>,
+    pub stock: i64,
+    pub reorder_level: i64,
     pub description: Option<String>,
 }
 
@@ -192,6 +229,7 @@ pub struct FecharMesaInput {
     pub id_mesa: i64,
     pub forma_pagamento: String,
     pub valor_pago_cents: Option<i64>,
+    pub operator_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -241,4 +279,152 @@ pub struct LogFiltros {
     pub numero_mesa: Option<i64>,
     pub data_inicio: Option<i64>,
     pub data_fim: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CashRegister {
+    pub id: i64,
+    pub opened_at: i64,
+    pub closed_at: Option<i64>,
+    pub initial_balance_cents: i64,
+    pub final_counted_cents: Option<i64>,
+    pub expected_balance_cents: i64,
+    pub difference_cents: Option<i64>,
+    pub operator_name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CashMovement {
+    pub id: i64,
+    pub cash_register_id: i64,
+    pub movement_type: String,
+    pub amount_cents: i64,
+    pub note: Option<String>,
+    pub operator_name: String,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCashRegisterInput {
+    pub initial_balance_cents: i64,
+    pub operator_name: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloseCashRegisterInput {
+    pub final_counted_cents: i64,
+    pub operator_name: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CashMovementInput {
+    pub movement_type: String,
+    pub amount_cents: i64,
+    pub note: Option<String>,
+    pub operator_name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StockMovement {
+    pub id: i64,
+    pub product_id: i64,
+    pub product_name: String,
+    pub movement_type: String,
+    pub quantity: i64,
+    pub previous_stock: i64,
+    pub new_stock: i64,
+    pub operator_name: String,
+    pub note: Option<String>,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StockAdjustInput {
+    pub product_id: i64,
+    pub quantity: i64,
+    pub movement_type: String,
+    pub operator_name: String,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalUser {
+    pub id: i64,
+    pub username: String,
+    pub role: String,
+    pub active: bool,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginInput {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateUserInput {
+    pub username: String,
+    pub password: String,
+    pub role: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthPayload {
+    pub user: LocalUser,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SalesByDay {
+    pub date_label: String,
+    pub total_cents: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TopProductReport {
+    pub product_name: String,
+    pub quantity: i64,
+    pub total_cents: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportsPayload {
+    pub total_revenue_cents: i64,
+    pub estimated_profit_cents: i64,
+    pub sales_by_day: Vec<SalesByDay>,
+    pub top_products: Vec<TopProductReport>,
+    pub low_stock_products: Vec<Product>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupResult {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportCsvInput {
+    pub filename: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportCsvResult {
+    pub path: String,
 }

@@ -2,6 +2,7 @@ import type {
   FecharMesaInput,
   LogEntry,
   LogFiltros,
+  ExportCsvResult,
   Mesa,
   MesaDetailed,
   MesaProdutoDetalhado,
@@ -53,5 +54,11 @@ export const mesaService = {
 
   getLogs(filtros?: LogFiltros): Promise<LogEntry[]> {
     return callCommand<LogEntry[]>("get_logs", { filtros: filtros ?? null });
+  },
+
+  exportCsv(filename: string, content: string): Promise<ExportCsvResult> {
+    return callCommand<ExportCsvResult>("export_csv", {
+      input: { filename, content }
+    });
   }
 };

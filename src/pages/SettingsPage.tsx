@@ -147,6 +147,31 @@ export function SettingsPage({ config, saving, onSave, onMessage }: SettingsPage
             }))
           }
         />
+        <div className="form-grid">
+          <TextInput
+            label="Quantidade de mesas"
+            type="number"
+            min={1}
+            max={100}
+            value={draft.tableCount}
+            onChange={(event) =>
+              setDraft((current) => ({
+                ...current,
+                tableCount: Number.parseInt(event.target.value, 10) || 40
+              }))
+            }
+            hint="Portex PDV permite configurar de 1 a 100 mesas."
+          />
+          <TextInput
+            label="Horário diário de backup"
+            type="time"
+            value={draft.backupTime ?? "23:00"}
+            onChange={(event) =>
+              setDraft((current) => ({ ...current, backupTime: event.target.value }))
+            }
+            hint="O backup automático roda nesse horário enquanto o app estiver aberto. O backup manual fica em Relatórios."
+          />
+        </div>
       </section>
 
       <section className="settings-section">

@@ -23,7 +23,7 @@ pub fn run() {
             std::fs::create_dir_all(&data_dir)
                 .map_err(|error| format!("Nao foi possivel criar a pasta de dados: {error}"))?;
 
-            let database = Database::initialize(data_dir.join("sistema_tickets_gpc.sqlite"))
+            let database = Database::initialize(data_dir.join("portex_pdv.sqlite"))
                 .map_err(|error| error.to_string())?;
 
             app.manage(AppContext { database });
@@ -37,6 +37,10 @@ pub fn run() {
             commands::create_product,
             commands::update_product,
             commands::delete_product,
+            commands::list_categories,
+            commands::create_category,
+            commands::adjust_stock,
+            commands::list_stock_movements,
             commands::print_tickets,
             commands::verify_ticket,
             commands::deactivate_ticket,
@@ -52,9 +56,20 @@ pub fn run() {
             commands::get_mesa_sessao,
             commands::fechar_mesa,
             commands::get_logs,
+            commands::login,
+            commands::list_users,
+            commands::create_user,
+            commands::get_current_cash_register,
+            commands::open_cash_register,
+            commands::close_cash_register,
+            commands::add_cash_movement,
+            commands::list_cash_movements,
+            commands::get_reports,
+            commands::backup_database,
+            commands::export_csv,
             commands::list_printers,
             commands::open_creator_portfolio
         ])
         .run(tauri::generate_context!())
-        .expect("falha ao iniciar o Sistema de Tickets GPC");
+        .expect("falha ao iniciar o Portex PDV");
 }

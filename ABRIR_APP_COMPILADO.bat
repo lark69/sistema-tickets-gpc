@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 
-set APP_EXE=src-tauri\target\release\sistema_tickets_gpc.exe
+set APP_EXE=src-tauri\target\release\portex_pdv.exe
 
 if exist "%APP_EXE%" (
   start "" "%APP_EXE%"

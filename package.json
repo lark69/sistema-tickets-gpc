@@ -1,8 +1,8 @@
 {
-  "name": "sistema-tickets-gpc",
+  "name": "portex-pdv",
   "version": "1.0.0",
   "private": true,
-  "description": "Aplicativo desktop moderno para cadastro e impressão térmica de tickets de produtos.",
+  "description": "PDV desktop moderno para Windows com mesas, caixa, estoque e impressao termica.",
   "type": "module",
   "scripts": {
     "dev": "tauri dev",

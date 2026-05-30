@@ -1,6 +1,6 @@
 # Arquitetura
 
-O Sistema de Tickets GPC foi organizado em camadas para facilitar manutencao, testes futuros e evolucao.
+O Portex PDV foi organizado em camadas para facilitar manutencao, testes futuros e evolucao.
 
 ## Frontend
 

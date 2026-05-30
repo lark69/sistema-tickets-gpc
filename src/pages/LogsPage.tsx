@@ -56,13 +56,10 @@ export function LogsPage({ onMessage }: LogsPageProps) {
   }, [logs]);
 
   function exportCsv() {
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "logs-sistema-tickets-gpc.csv";
-    link.click();
-    URL.revokeObjectURL(url);
+    mesaService
+      .exportCsv("logs-portex-pdv.csv", csv)
+      .then((result) => onMessage(`CSV exportado em: ${result.path}`, "success"))
+      .catch((err) => onMessage(getErrorMessage(err), "error"));
   }
 
   useEffect(() => {
@@ -91,14 +88,16 @@ export function LogsPage({ onMessage }: LogsPageProps) {
             { value: "", label: "Todos" },
             { value: "ticket_gerado", label: "Ticket gerado" },
             { value: "mesa_fechada", label: "Mesa fechada" },
-            { value: "produto_criado", label: "Produto criado" }
+            { value: "produto_criado", label: "Produto criado" },
+            { value: "produto_editado", label: "Produto editado" },
+            { value: "categoria_criada", label: "Categoria criada" }
           ]}
         />
         <TextInput
           label="Número da mesa"
           type="number"
           min={1}
-          max={40}
+          max={100}
           value={numeroMesa}
           onChange={(event) => setNumeroMesa(event.target.value)}
           placeholder="01"

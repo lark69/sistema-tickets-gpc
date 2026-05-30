@@ -19,10 +19,14 @@ export function ProductCard({
   onDelete
 }: ProductCardProps) {
   return (
-    <article className={`product-card ${compact ? "product-card-compact" : ""}`}>
+    <article className={`product-card ${compact ? "product-card-compact" : ""} ${product.stock <= product.reorderLevel ? "stock-low" : ""}`}>
       <div className="product-card-content">
         <h3>{product.name}</h3>
+        <p>
+          {product.categoryName || "Sem categoria"} · {product.unit} · Estoque: {product.stock}
+        </p>
         {product.description ? <p>{product.description}</p> : null}
+        {product.stock < 0 ? <p className="danger-text">Estoque negativo - adicione mais produtos</p> : null}
         <strong>{formatCurrency(product.priceCents)}</strong>
       </div>
       <div className="product-card-actions">
