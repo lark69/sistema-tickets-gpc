@@ -88,6 +88,7 @@ export function LogsPage({ onMessage }: LogsPageProps) {
             { value: "", label: "Todos" },
             { value: "ticket_gerado", label: "Ticket gerado" },
             { value: "mesa_fechada", label: "Mesa fechada" },
+            { value: "venda_caixa", label: "Venda de caixa" },
             { value: "produto_criado", label: "Produto criado" },
             { value: "produto_editado", label: "Produto editado" },
             { value: "categoria_criada", label: "Categoria criada" }

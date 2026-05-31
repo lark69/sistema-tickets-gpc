@@ -6,7 +6,7 @@ import { Button } from "../ui/Button";
 interface ProductCardProps {
   product: Product;
   compact?: boolean;
-  onPrint: (product: Product) => void;
+  onPrint?: (product: Product) => void;
   onEdit?: (product: Product) => void;
   onDelete?: (product: Product) => void;
 }
@@ -30,9 +30,11 @@ export function ProductCard({
         <strong>{formatCurrency(product.priceCents)}</strong>
       </div>
       <div className="product-card-actions">
-        <Button icon={<Printer size={17} />} onClick={() => onPrint(product)}>
-          Imprimir
-        </Button>
+        {onPrint ? (
+          <Button icon={<Printer size={17} />} onClick={() => onPrint(product)}>
+            Imprimir
+          </Button>
+        ) : null}
         {onEdit ? (
           <Button variant="secondary" icon={<Pencil size={17} />} onClick={() => onEdit(product)}>
             Editar

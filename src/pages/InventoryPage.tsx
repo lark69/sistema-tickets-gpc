@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { Search } from "lucide-react";
+import { useMemo, useState } from "react";
 import { Button } from "../components/ui/Button";
 import { TextInput } from "../components/ui/TextInput";
 import { adminService } from "../services/adminService";
@@ -14,6 +15,29 @@ interface InventoryPageProps {
 
 export function InventoryPage({ products, currentUser, onRefresh, onMessage }: InventoryPageProps) {
   const [quantities, setQuantities] = useState<Record<number, string>>({});
+  const [query, setQuery] = useState("");
+
+  const filteredProducts = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase("pt-BR");
+
+    if (!normalized) {
+      return products;
+    }
+
+    return products.filter((product) => {
+      const searchable = [
+        product.name,
+        product.categoryName ?? "",
+        product.barcode ?? "",
+        String(product.id).padStart(3, "0"),
+        String(product.id)
+      ]
+        .join(" ")
+        .toLocaleLowerCase("pt-BR");
+
+      return searchable.includes(normalized);
+    });
+  }, [products, query]);
 
   async function adjust(product: Product, movementType: "entrada" | "saida" | "ajuste") {
     try {
@@ -38,8 +62,17 @@ export function InventoryPage({ products, currentUser, onRefresh, onMessage }: I
         <h1>Inventário</h1>
         <p>Produtos abaixo do mínimo aparecem destacados.</p>
       </div>
+      <div className="toolbar">
+        <TextInput
+          label="Pesquisar no estoque"
+          value={query}
+          icon={<Search size={18} />}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Nome, categoria, codigo ou ID"
+        />
+      </div>
       <div className="product-list">
-        {products.map((product) => (
+        {filteredProducts.map((product) => (
           <article key={product.id} className={`product-card ${product.stock <= product.reorderLevel ? "stock-low" : ""}`}>
             <div className="product-card-content">
               <h3>{product.name}</h3>
@@ -60,6 +93,7 @@ export function InventoryPage({ products, currentUser, onRefresh, onMessage }: I
             </div>
           </article>
         ))}
+        {filteredProducts.length === 0 ? <div className="empty-state"><h2>Nenhum produto encontrado.</h2></div> : null}
       </div>
     </section>
   );

@@ -1,7 +1,7 @@
 import { Save, X } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { adminService } from "../../services/adminService";
-import type { Category, Product, ProductFormState, ProductInput, ProductUnit } from "../../types";
+import type { Category, LocalUser, Product, ProductFormState, ProductInput, ProductUnit } from "../../types";
 import { centsToInput, currencyToCents } from "../../utils/currency";
 import { getErrorMessage } from "../../utils/errors";
 import { validateProductForm } from "../../utils/validation";
@@ -12,6 +12,7 @@ interface ProductFormProps {
   product?: Product | null;
   categories?: Category[];
   operatorName?: string;
+  requester?: LocalUser | null;
   onCategoryCreated?: (category: Category) => void;
   onMessage?: (message: string, tone: "success" | "error" | "info") => void;
   saving: boolean;
@@ -23,6 +24,7 @@ export function ProductForm({
   product,
   categories = [],
   operatorName,
+  requester,
   onCategoryCreated,
   onMessage,
   saving,
@@ -95,7 +97,7 @@ export function ProductForm({
 
     setCreatingCategory(true);
     try {
-      const category = await adminService.createCategory(name, operatorName);
+      const category = await adminService.createCategory(name, operatorName, requester);
       setLocalCategories((current) => [...current, category]);
       setForm((current) => ({ ...current, categoryId: String(category.id) }));
       setNewCategory("");

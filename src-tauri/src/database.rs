@@ -1,18 +1,23 @@
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    AppConfig, AppConfigInput, AuthPayload, CashMovement, CashMovementInput,
-    CashRegister, Category, CategoryInput, CreateMesaInput, CreateUserInput, FecharMesaInput,
+    AppConfig, AppConfigInput, AuthPayload, CashMovement, CashMovementInput, CashRegister,
+    Category, CategoryInput, CategoryUpdateInput, CloseCashRegisterInput, CreateMesaInput,
+    CreateUserInput, DeleteCategoryInput, DeleteUserInput, FecharMesaInput, FecharVendaCaixaInput,
     IssuedTicket, LocalUser, LogEntry, LogFiltros, LoginInput, Mesa, MesaDetailed,
     MesaProdutoDetalhado, MesaProdutoInput, MesaSessao, OpenCashRegisterInput, Product,
-    ProductInput, ProductUpdateInput, ReportsPayload, SalesByDay, StockAdjustInput,
-    StockMovement, TicketData, TicketProduto, TopProductReport, CloseCashRegisterInput,
+    ProductInput, ProductUpdateInput, ReportsPayload, SaleCartItemInput, SalesByDay,
+    StockAdjustInput, StockMovement, TicketData, TicketProduto, TopProductReport, UpdateUserInput,
 };
 use rusqlite::{params, Connection, OptionalExtension};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static TICKET_COUNTER: AtomicU64 = AtomicU64::new(1);
+const MANAGE_PRODUCTS_PERMISSION: &str = "manageProducts";
+const MANAGE_USERS_PERMISSION: &str = "manageUsers";
+const DEFAULT_OPERATOR_PERMISSIONS_JSON: &str = "[\"addTableProducts\",\"removeTableProducts\",\"closeTable\",\"manageTickets\",\"manageCash\",\"manageCashMovements\"]";
 
 #[derive(Clone)]
 pub struct Database {
@@ -110,9 +115,15 @@ impl Database {
         let mut statement = connection.prepare(
             "SELECT p.id, p.name, p.price_cents, p.barcode, p.cost_price_cents, p.unit,
                     p.category_id, c.name, p.stock, p.reorder_level, p.description,
-                    p.created_at, p.updated_at
+                    p.created_at, p.updated_at,
+                    COALESCE(sold.sold_quantity, 0)
              FROM products p
              LEFT JOIN categories c ON c.id = p.category_id
+             LEFT JOIN (
+                SELECT product_id, SUM(quantity) AS sold_quantity
+                FROM sale_items
+                GROUP BY product_id
+             ) sold ON sold.product_id = p.id
              ORDER BY p.name COLLATE NOCASE ASC",
         )?;
 
@@ -129,9 +140,15 @@ impl Database {
             .query_row(
                 "SELECT p.id, p.name, p.price_cents, p.barcode, p.cost_price_cents, p.unit,
                         p.category_id, c.name, p.stock, p.reorder_level, p.description,
-                        p.created_at, p.updated_at
+                        p.created_at, p.updated_at,
+                        COALESCE(sold.sold_quantity, 0)
                  FROM products p
                  LEFT JOIN categories c ON c.id = p.category_id
+                 LEFT JOIN (
+                    SELECT product_id, SUM(quantity) AS sold_quantity
+                    FROM sale_items
+                    GROUP BY product_id
+                 ) sold ON sold.product_id = p.id
                  WHERE p.id = ?1",
                 params![product_id],
                 map_product,
@@ -227,7 +244,9 @@ impl Database {
         )?;
 
         if affected == 0 {
-            return Err(AppError::InvalidInput("Produto nao encontrado.".to_string()));
+            return Err(AppError::InvalidInput(
+                "Produto nao encontrado.".to_string(),
+            ));
         }
 
         let product = self.get_product(input.id)?;
@@ -256,10 +275,13 @@ impl Database {
         }
 
         let connection = self.connection()?;
-        let affected = connection.execute("DELETE FROM products WHERE id = ?1", params![product_id])?;
+        let affected =
+            connection.execute("DELETE FROM products WHERE id = ?1", params![product_id])?;
 
         if affected == 0 {
-            return Err(AppError::InvalidInput("Produto nao encontrado.".to_string()));
+            return Err(AppError::InvalidInput(
+                "Produto nao encontrado.".to_string(),
+            ));
         }
 
         Ok(())
@@ -378,18 +400,31 @@ impl Database {
 
     pub fn list_categories(&self) -> AppResult<Vec<Category>> {
         let connection = self.connection()?;
-        let mut statement =
-            connection.prepare("SELECT id, name, created_at FROM categories ORDER BY name COLLATE NOCASE")?;
+        let mut statement = connection
+            .prepare("SELECT id, name, created_at FROM categories ORDER BY name COLLATE NOCASE")?;
         let categories = statement
             .query_map([], map_category)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(categories)
     }
 
-    pub fn create_category(&self, input: CategoryInput, operator_name: Option<String>) -> AppResult<Category> {
+    pub fn create_category(
+        &self,
+        input: CategoryInput,
+        operator_name: Option<String>,
+        requester_role: Option<String>,
+        requester_permissions: Option<Vec<String>>,
+    ) -> AppResult<Category> {
+        ensure_permission(
+            requester_role.as_deref(),
+            requester_permissions.as_deref(),
+            MANAGE_PRODUCTS_PERMISSION,
+        )?;
         let name = input.name.trim().to_string();
         if name.is_empty() {
-            return Err(AppError::InvalidInput("Informe o nome da categoria.".to_string()));
+            return Err(AppError::InvalidInput(
+                "Informe o nome da categoria.".to_string(),
+            ));
         }
         let now = now_millis();
         let connection = self.connection()?;
@@ -409,20 +444,104 @@ impl Database {
             None,
             None,
             None,
-            Some(format!("[{{\"categoria\":\"{}\"}}]", category.name.replace('"', "'"))),
+            Some(format!(
+                "[{{\"categoria\":\"{}\"}}]",
+                category.name.replace('"', "'")
+            )),
             None,
             None,
         );
         Ok(category)
     }
 
+    pub fn update_category(&self, input: CategoryUpdateInput) -> AppResult<Category> {
+        ensure_permission(
+            input.requester_role.as_deref(),
+            input.requester_permissions.as_deref(),
+            MANAGE_PRODUCTS_PERMISSION,
+        )?;
+        let name = input.name.trim().to_string();
+        if input.id <= 0 {
+            return Err(AppError::InvalidInput("Categoria invalida.".to_string()));
+        }
+        if name.is_empty() {
+            return Err(AppError::InvalidInput(
+                "Informe o nome da categoria.".to_string(),
+            ));
+        }
+
+        let connection = self.connection()?;
+        let affected = connection.execute(
+            "UPDATE categories SET name = ?1 WHERE id = ?2",
+            params![name, input.id],
+        )?;
+
+        if affected == 0 {
+            return Err(AppError::InvalidInput(
+                "Categoria nao encontrada.".to_string(),
+            ));
+        }
+
+        let category = connection.query_row(
+            "SELECT id, name, created_at FROM categories WHERE id = ?1",
+            params![input.id],
+            map_category,
+        )?;
+        let _ = self.insert_log(
+            "categoria_editada",
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(format!(
+                "[{{\"categoria\":\"{}\"}}]",
+                category.name.replace('"', "'")
+            )),
+            None,
+            None,
+        );
+        Ok(category)
+    }
+
+    pub fn delete_category(&self, input: DeleteCategoryInput) -> AppResult<()> {
+        ensure_permission(
+            input.requester_role.as_deref(),
+            input.requester_permissions.as_deref(),
+            MANAGE_PRODUCTS_PERMISSION,
+        )?;
+        if input.id <= 0 {
+            return Err(AppError::InvalidInput("Categoria invalida.".to_string()));
+        }
+
+        let connection = self.connection()?;
+        connection.execute(
+            "UPDATE products SET category_id = NULL, updated_at = ?1 WHERE category_id = ?2",
+            params![now_millis(), input.id],
+        )?;
+        let affected =
+            connection.execute("DELETE FROM categories WHERE id = ?1", params![input.id])?;
+
+        if affected == 0 {
+            return Err(AppError::InvalidInput(
+                "Categoria nao encontrada.".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
     pub fn adjust_stock(&self, input: StockAdjustInput) -> AppResult<StockMovement> {
         let movement_type = input.movement_type.trim().to_lowercase();
         if !matches!(movement_type.as_str(), "entrada" | "ajuste" | "saida") {
-            return Err(AppError::InvalidInput("Tipo de movimento de estoque invalido.".to_string()));
+            return Err(AppError::InvalidInput(
+                "Tipo de movimento de estoque invalido.".to_string(),
+            ));
         }
         if input.quantity == 0 {
-            return Err(AppError::InvalidInput("Informe uma quantidade diferente de zero.".to_string()));
+            return Err(AppError::InvalidInput(
+                "Informe uma quantidade diferente de zero.".to_string(),
+            ));
         }
         let product = self.get_product(input.product_id)?;
         let previous_stock = product.stock;
@@ -586,6 +705,11 @@ impl Database {
 
     pub fn add_produto_to_mesa(&self, input: MesaProdutoInput) -> AppResult<()> {
         validate_mesa_product_input(&input)?;
+        if self.get_current_cash_register()?.is_none() {
+            return Err(AppError::InvalidInput(
+                "Abra o caixa antes de adicionar produtos a mesa.".to_string(),
+            ));
+        }
         let now = now_millis();
         let connection = self.connection()?;
         self.get_mesa_by_id(input.id_mesa)?;
@@ -657,16 +781,47 @@ impl Database {
         let normalized_cliente = normalize_optional_text(nome_cliente);
         let now = now_millis();
         let connection = self.connection()?;
+        let mut current_quantities = BTreeMap::new();
+        let mut statement = connection
+            .prepare("SELECT id_produto, quantidade FROM mesa_produtos WHERE id_mesa = ?1")?;
+        for row in statement.query_map(params![id_mesa], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+        })? {
+            let (product_id, quantity) = row?;
+            current_quantities.insert(product_id, quantity);
+        }
+
+        let mut next_quantities = BTreeMap::new();
+        for item in &items {
+            validate_mesa_product_input(item)?;
+            if item.id_mesa != id_mesa {
+                return Err(AppError::InvalidInput(
+                    "Produto enviado para mesa invalida.".to_string(),
+                ));
+            }
+            *next_quantities.entry(item.id_produto).or_insert(0) += item.quantidade;
+        }
+
+        let adds_product = next_quantities.iter().any(|(product_id, quantity)| {
+            *quantity > current_quantities.get(product_id).copied().unwrap_or(0)
+        });
+
+        if adds_product && self.get_current_cash_register()?.is_none() {
+            return Err(AppError::InvalidInput(
+                "Abra o caixa antes de adicionar produtos a mesa.".to_string(),
+            ));
+        }
+
+        drop(statement);
         let transaction = connection.unchecked_transaction()?;
 
-        transaction.execute("DELETE FROM mesa_produtos WHERE id_mesa = ?1", params![id_mesa])?;
+        transaction.execute(
+            "DELETE FROM mesa_produtos WHERE id_mesa = ?1",
+            params![id_mesa],
+        )?;
 
         let has_items = !items.is_empty();
         for item in items {
-            validate_mesa_product_input(&item)?;
-            if item.id_mesa != id_mesa {
-                return Err(AppError::InvalidInput("Produto enviado para mesa invalida.".to_string()));
-            }
             transaction.execute(
                 "INSERT INTO mesa_produtos (id_mesa, id_produto, quantidade, adicionado_em)
                  VALUES (?1, ?2, ?3, ?4)",
@@ -699,12 +854,14 @@ impl Database {
 
     pub fn fechar_mesa(&self, input: FecharMesaInput) -> AppResult<TicketData> {
         let forma_pagamento = validate_payment_method(&input.forma_pagamento)?;
-        let operator_name =
-            normalize_optional_text(input.operator_name.clone()).unwrap_or_else(|| "caixa".to_string());
+        let operator_name = normalize_optional_text(input.operator_name.clone())
+            .unwrap_or_else(|| "caixa".to_string());
         let details = self.get_mesa_details(input.id_mesa)?;
 
         if details.produtos.is_empty() {
-            return Err(AppError::InvalidInput("Adicione produtos antes de fechar a mesa.".to_string()));
+            return Err(AppError::InvalidInput(
+                "Adicione produtos antes de fechar a mesa.".to_string(),
+            ));
         }
 
         let sessao = details
@@ -761,7 +918,9 @@ impl Database {
         let estimated_profit_cents = details
             .produtos
             .iter()
-            .map(|item| (item.produto.price_cents - item.produto.cost_price_cents) * item.quantidade)
+            .map(|item| {
+                (item.produto.price_cents - item.produto.cost_price_cents) * item.quantidade
+            })
             .sum::<i64>();
 
         connection.execute(
@@ -852,6 +1011,155 @@ impl Database {
         Ok(ticket_data)
     }
 
+    pub fn fechar_venda_caixa(&self, input: FecharVendaCaixaInput) -> AppResult<TicketData> {
+        let forma_pagamento = validate_payment_method(&input.forma_pagamento)?;
+        let operator_name = normalize_optional_text(input.operator_name.clone())
+            .unwrap_or_else(|| "caixa".to_string());
+
+        if self.get_current_cash_register()?.is_none() {
+            return Err(AppError::InvalidInput(
+                "Abra o caixa antes de finalizar uma venda.".to_string(),
+            ));
+        }
+
+        let normalized_items = normalize_sale_items(&input.items)?;
+        let mut produtos = Vec::new();
+        let mut product_rows = Vec::new();
+        let mut subtotal_cents = 0i64;
+
+        for (product_id, quantidade) in normalized_items {
+            let product = self.get_product(product_id)?;
+            let subtotal = product.price_cents * quantidade;
+            subtotal_cents += subtotal;
+            produtos.push(TicketProduto {
+                nome: product.name.clone(),
+                quantidade,
+                preco_unit_cents: product.price_cents,
+                subtotal_cents: subtotal,
+            });
+            product_rows.push((product, quantidade, subtotal));
+        }
+
+        let acrescimo_cents = if forma_pagamento == "credito" {
+            ((subtotal_cents as f64) * 0.05).round() as i64
+        } else {
+            0
+        };
+        let total_cents = subtotal_cents + acrescimo_cents;
+        let valor_pago_cents = if forma_pagamento == "dinheiro" {
+            let paid = input.valor_pago_cents.ok_or_else(|| {
+                AppError::InvalidInput("Informe o valor pago em dinheiro.".to_string())
+            })?;
+            if paid < total_cents {
+                return Err(AppError::InvalidInput(
+                    "O valor pago deve ser maior ou igual ao total.".to_string(),
+                ));
+            }
+            Some(paid)
+        } else {
+            input.valor_pago_cents
+        };
+        let troco_cents = valor_pago_cents.map(|paid| (paid - total_cents).max(0));
+        let now = now_millis();
+        let ticket_id = generate_short_id(now, TICKET_COUNTER.fetch_add(1, Ordering::Relaxed));
+        let ticket_data = TicketData {
+            numero_mesa: 0,
+            nome_cliente: None,
+            tempo_permanencia: "00:00:00".to_string(),
+            id_unico: ticket_id,
+            forma_pagamento: forma_pagamento.clone(),
+            subtotal_cents,
+            acrescimo_cents,
+            total_cents,
+            valor_pago_cents,
+            troco_cents,
+            produtos: produtos.clone(),
+        };
+        let produtos_json = serde_json::to_string(&produtos).ok();
+        let estimated_profit_cents = product_rows
+            .iter()
+            .map(|(product, quantidade, _)| {
+                (product.price_cents - product.cost_price_cents) * quantidade
+            })
+            .sum::<i64>();
+        let connection = self.connection()?;
+
+        connection.execute(
+            "INSERT INTO sales (
+                mesa_numero, sale_type, operator_name, subtotal_cents, discount_cents,
+                surcharge_cents, total_cents, estimated_profit_cents, payment_method,
+                created_at, nfe_status
+             ) VALUES (NULL, 'caixa', ?1, ?2, 0, ?3, ?4, ?5, ?6, ?7, 'placeholder')",
+            params![
+                operator_name.clone(),
+                subtotal_cents,
+                acrescimo_cents,
+                total_cents,
+                estimated_profit_cents,
+                ticket_data.forma_pagamento,
+                now
+            ],
+        )?;
+        let sale_id = connection.last_insert_rowid();
+
+        for (product, quantidade, subtotal) in &product_rows {
+            connection.execute(
+                "INSERT INTO sale_items (
+                    sale_id, product_id, product_name, quantity, unit_price_cents,
+                    cost_price_cents, subtotal_cents
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    sale_id,
+                    product.id,
+                    product.name,
+                    quantidade,
+                    product.price_cents,
+                    product.cost_price_cents,
+                    subtotal
+                ],
+            )?;
+            let previous_stock = product.stock;
+            let new_stock = previous_stock - quantidade;
+            connection.execute(
+                "UPDATE products SET stock = ?1, updated_at = ?2 WHERE id = ?3",
+                params![new_stock, now, product.id],
+            )?;
+            connection.execute(
+                "INSERT INTO stock_movements (
+                    product_id, movement_type, quantity, previous_stock, new_stock,
+                    operator_name, note, created_at
+                 ) VALUES (?1, 'venda', ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    product.id,
+                    -quantidade,
+                    previous_stock,
+                    new_stock,
+                    operator_name.clone(),
+                    if new_stock < 0 {
+                        Some("Estoque negativo - adicione mais produtos")
+                    } else {
+                        None
+                    },
+                    now
+                ],
+            )?;
+        }
+
+        self.insert_log(
+            "venda_caixa",
+            None,
+            Some(operator_name),
+            Some(total_cents),
+            Some(ticket_data.forma_pagamento.clone()),
+            None,
+            produtos_json,
+            None,
+            Some(ticket_data.id_unico.clone()),
+        )?;
+
+        Ok(ticket_data)
+    }
+
     pub fn get_logs(&self, filtros: Option<LogFiltros>) -> AppResult<Vec<LogEntry>> {
         let filtros = filtros.unwrap_or(LogFiltros {
             tipo: None,
@@ -914,7 +1222,7 @@ impl Database {
         let connection = self.connection()?;
         let user = connection
             .query_row(
-                "SELECT id, username, role, active, created_at
+                "SELECT id, username, role, permissions_json, active, created_at
                  FROM users
                  WHERE username = ?1 AND password_hash = ?2 AND active = 1",
                 params![username, password_hash],
@@ -928,39 +1236,227 @@ impl Database {
 
     pub fn list_users(&self) -> AppResult<Vec<LocalUser>> {
         let connection = self.connection()?;
-        let mut statement =
-            connection.prepare("SELECT id, username, role, active, created_at FROM users ORDER BY username")?;
+        let mut statement = connection.prepare(
+            "SELECT id, username, role, permissions_json, active, created_at FROM users ORDER BY username",
+        )?;
         let users = statement
             .query_map([], map_local_user)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(users)
     }
 
+    pub fn has_configured_users(&self) -> AppResult<bool> {
+        let connection = self.connection()?;
+        let default_admin_hash = hash_password("admin");
+        let count = connection.query_row(
+            "SELECT COUNT(*)
+             FROM users
+             WHERE active = 1
+               AND NOT (username = 'admin' AND password_hash = ?1 AND role = 'admin')",
+            params![default_admin_hash],
+            |row| row.get::<_, i64>(0),
+        )?;
+
+        Ok(count > 0)
+    }
+
+    fn active_admin_count(&self) -> AppResult<i64> {
+        let connection = self.connection()?;
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM users WHERE active = 1 AND role = 'admin'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(AppError::from)
+    }
+
     pub fn create_user(&self, input: CreateUserInput) -> AppResult<LocalUser> {
         let username = input.username.trim().to_string();
         let role = input.role.trim().to_lowercase();
+        let permissions_json = normalize_permissions_json(input.permissions, &role)?;
+        let has_configured_users = self.has_configured_users()?;
+        if has_configured_users {
+            ensure_permission(
+                input.requester_role.as_deref(),
+                input.requester_permissions.as_deref(),
+                MANAGE_USERS_PERMISSION,
+            )?;
+        } else if role != "admin" {
+            return Err(AppError::InvalidInput(
+                "O primeiro usuario precisa ser administrador.".to_string(),
+            ));
+        }
+
         if username.is_empty() || input.password.len() < 4 {
             return Err(AppError::InvalidInput(
                 "Informe usuario e senha com pelo menos 4 caracteres.".to_string(),
             ));
         }
         if role != "admin" && role != "operator" {
-            return Err(AppError::InvalidInput("Perfil de usuario invalido.".to_string()));
+            return Err(AppError::InvalidInput(
+                "Perfil de usuario invalido.".to_string(),
+            ));
         }
         let now = now_millis();
         let connection = self.connection()?;
+
+        if username == "admin" {
+            let default_admin_id = connection
+                .query_row(
+                    "SELECT id FROM users
+                     WHERE username = 'admin' AND password_hash = ?1 AND role = 'admin'",
+                    params![hash_password("admin")],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?;
+
+            if let Some(user_id) = default_admin_id {
+                connection.execute(
+                    "UPDATE users
+                     SET password_hash = ?1, role = ?2, permissions_json = ?3, active = 1
+                     WHERE id = ?4",
+                    params![
+                        hash_password(&input.password),
+                        role,
+                        permissions_json,
+                        user_id
+                    ],
+                )?;
+                return connection
+                    .query_row(
+                        "SELECT id, username, role, permissions_json, active, created_at FROM users WHERE id = ?1",
+                        params![user_id],
+                        map_local_user,
+                    )
+                    .map_err(AppError::from);
+            }
+        }
+
         connection.execute(
-            "INSERT INTO users (username, password_hash, role, active, created_at)
-             VALUES (?1, ?2, ?3, 1, ?4)",
-            params![username, hash_password(&input.password), role, now],
+            "INSERT INTO users (username, password_hash, role, permissions_json, active, created_at)
+             VALUES (?1, ?2, ?3, ?4, 1, ?5)",
+            params![username, hash_password(&input.password), role, permissions_json, now],
         )?;
-        connection
+        let user = connection
             .query_row(
-                "SELECT id, username, role, active, created_at FROM users WHERE id = ?1",
+                "SELECT id, username, role, permissions_json, active, created_at FROM users WHERE id = ?1",
                 params![connection.last_insert_rowid()],
                 map_local_user,
             )
+            .map_err(AppError::from)?;
+
+        if !has_configured_users {
+            connection.execute(
+                "DELETE FROM users WHERE username = 'admin' AND password_hash = ?1 AND id != ?2",
+                params![hash_password("admin"), user.id],
+            )?;
+        }
+
+        Ok(user)
+    }
+
+    pub fn update_user(&self, input: UpdateUserInput) -> AppResult<LocalUser> {
+        ensure_permission(
+            input.requester_role.as_deref(),
+            input.requester_permissions.as_deref(),
+            MANAGE_USERS_PERMISSION,
+        )?;
+        if input.id <= 0 {
+            return Err(AppError::InvalidInput("Usuario invalido.".to_string()));
+        }
+
+        let username = input.username.trim().to_string();
+        let role = input.role.trim().to_lowercase();
+        let permissions_json = normalize_permissions_json(input.permissions, &role)?;
+        let password = input
+            .password
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+
+        if username.is_empty() {
+            return Err(AppError::InvalidInput("Informe o usuario.".to_string()));
+        }
+
+        if role != "admin" && role != "operator" {
+            return Err(AppError::InvalidInput(
+                "Perfil de usuario invalido.".to_string(),
+            ));
+        }
+
+        if let Some(password) = password.as_ref() {
+            if password.len() < 4 {
+                return Err(AppError::InvalidInput(
+                    "A senha precisa ter pelo menos 4 caracteres.".to_string(),
+                ));
+            }
+        }
+
+        let connection = self.connection()?;
+        let current_role = connection
+            .query_row(
+                "SELECT role FROM users WHERE id = ?1",
+                params![input.id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or_else(|| AppError::InvalidInput("Usuario nao encontrado.".to_string()))?;
+
+        if current_role == "admin" && role != "admin" && self.active_admin_count()? <= 1 {
+            return Err(AppError::InvalidInput(
+                "Mantenha pelo menos um administrador ativo.".to_string(),
+            ));
+        }
+
+        if let Some(password) = password {
+            connection.execute(
+                "UPDATE users SET username = ?1, password_hash = ?2, role = ?3, permissions_json = ?4 WHERE id = ?5",
+                params![username, hash_password(&password), role, permissions_json, input.id],
+            )?;
+        } else {
+            connection.execute(
+                "UPDATE users SET username = ?1, role = ?2, permissions_json = ?3 WHERE id = ?4",
+                params![username, role, permissions_json, input.id],
+            )?;
+        }
+
+        connection
+            .query_row(
+                "SELECT id, username, role, permissions_json, active, created_at FROM users WHERE id = ?1",
+                params![input.id],
+                map_local_user,
+            )
             .map_err(AppError::from)
+    }
+
+    pub fn delete_user(&self, input: DeleteUserInput) -> AppResult<()> {
+        ensure_permission(
+            input.requester_role.as_deref(),
+            input.requester_permissions.as_deref(),
+            MANAGE_USERS_PERMISSION,
+        )?;
+        if input.id <= 0 {
+            return Err(AppError::InvalidInput("Usuario invalido.".to_string()));
+        }
+
+        let connection = self.connection()?;
+        let current_role = connection
+            .query_row(
+                "SELECT role FROM users WHERE id = ?1",
+                params![input.id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or_else(|| AppError::InvalidInput("Usuario nao encontrado.".to_string()))?;
+
+        if current_role == "admin" && self.active_admin_count()? <= 1 {
+            return Err(AppError::InvalidInput(
+                "Mantenha pelo menos um administrador ativo.".to_string(),
+            ));
+        }
+
+        connection.execute("DELETE FROM users WHERE id = ?1", params![input.id])?;
+        Ok(())
     }
 
     pub fn get_current_cash_register(&self) -> AppResult<Option<CashRegister>> {
@@ -976,15 +1472,21 @@ impl Database {
                 map_cash_register,
             )
             .optional()?;
-        register.map(|register| self.enrich_cash_register(register)).transpose()
+        register
+            .map(|register| self.enrich_cash_register(register))
+            .transpose()
     }
 
     pub fn open_cash_register(&self, input: OpenCashRegisterInput) -> AppResult<CashRegister> {
         if self.get_current_cash_register()?.is_some() {
-            return Err(AppError::InvalidInput("Ja existe um caixa aberto.".to_string()));
+            return Err(AppError::InvalidInput(
+                "Ja existe um caixa aberto.".to_string(),
+            ));
         }
         if input.initial_balance_cents < 0 {
-            return Err(AppError::InvalidInput("Saldo inicial invalido.".to_string()));
+            return Err(AppError::InvalidInput(
+                "Saldo inicial invalido.".to_string(),
+            ));
         }
         let now = now_millis();
         let connection = self.connection()?;
@@ -1020,15 +1522,19 @@ impl Database {
     }
 
     pub fn add_cash_movement(&self, input: CashMovementInput) -> AppResult<CashMovement> {
-        let current = self
-            .get_current_cash_register()?
-            .ok_or_else(|| AppError::InvalidInput("Abra o caixa antes de registrar movimentos.".to_string()))?;
+        let current = self.get_current_cash_register()?.ok_or_else(|| {
+            AppError::InvalidInput("Abra o caixa antes de registrar movimentos.".to_string())
+        })?;
         let movement_type = input.movement_type.trim().to_lowercase();
         if movement_type != "sangria" && movement_type != "suprimento" {
-            return Err(AppError::InvalidInput("Movimento de caixa invalido.".to_string()));
+            return Err(AppError::InvalidInput(
+                "Movimento de caixa invalido.".to_string(),
+            ));
         }
         if input.amount_cents <= 0 {
-            return Err(AppError::InvalidInput("Informe um valor maior que zero.".to_string()));
+            return Err(AppError::InvalidInput(
+                "Informe um valor maior que zero.".to_string(),
+            ));
         }
         let now = now_millis();
         let connection = self.connection()?;
@@ -1260,6 +1766,7 @@ impl Database {
                 username TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
                 role TEXT NOT NULL,
+                permissions_json TEXT NOT NULL DEFAULT '[]',
                 active INTEGER NOT NULL DEFAULT 1,
                 created_at INTEGER NOT NULL
             );
@@ -1303,14 +1810,45 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_sale_items_product ON sale_items(product_id);",
         )?;
 
-        add_column_if_missing(&connection, "app_config", "table_count", "INTEGER NOT NULL DEFAULT 40")?;
+        add_column_if_missing(
+            &connection,
+            "app_config",
+            "table_count",
+            "INTEGER NOT NULL DEFAULT 40",
+        )?;
         add_column_if_missing(&connection, "app_config", "backup_time", "TEXT")?;
         add_column_if_missing(&connection, "products", "barcode", "TEXT")?;
-        add_column_if_missing(&connection, "products", "cost_price_cents", "INTEGER NOT NULL DEFAULT 0")?;
-        add_column_if_missing(&connection, "products", "unit", "TEXT NOT NULL DEFAULT 'UN'")?;
+        add_column_if_missing(
+            &connection,
+            "products",
+            "cost_price_cents",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        add_column_if_missing(
+            &connection,
+            "products",
+            "unit",
+            "TEXT NOT NULL DEFAULT 'UN'",
+        )?;
         add_column_if_missing(&connection, "products", "category_id", "INTEGER")?;
-        add_column_if_missing(&connection, "products", "stock", "INTEGER NOT NULL DEFAULT 0")?;
-        add_column_if_missing(&connection, "products", "reorder_level", "INTEGER NOT NULL DEFAULT 0")?;
+        add_column_if_missing(
+            &connection,
+            "products",
+            "stock",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        add_column_if_missing(
+            &connection,
+            "products",
+            "reorder_level",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        add_column_if_missing(
+            &connection,
+            "users",
+            "permissions_json",
+            &format!("TEXT NOT NULL DEFAULT '{DEFAULT_OPERATOR_PERMISSIONS_JSON}'"),
+        )?;
 
         connection.execute(
             "INSERT OR IGNORE INTO app_config (
@@ -1319,12 +1857,6 @@ impl Database {
                 table_count, backup_time, updated_at
              ) VALUES (1, '', '', NULL, 30, 'light', NULL, 48, 0, 0, 40, NULL, ?1)",
             params![now],
-        )?;
-
-        connection.execute(
-            "INSERT OR IGNORE INTO users (username, password_hash, role, active, created_at)
-             VALUES ('admin', ?1, 'admin', 1, ?2)",
-            params![hash_password("admin"), now],
         )?;
 
         self.ensure_default_mesas()?;
@@ -1337,9 +1869,11 @@ impl Database {
         let now = now_millis();
 
         let table_count = connection
-            .query_row("SELECT table_count FROM app_config WHERE id = 1", [], |row| {
-                row.get::<_, i64>(0)
-            })
+            .query_row(
+                "SELECT table_count FROM app_config WHERE id = 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
             .unwrap_or(40)
             .clamp(1, 100);
 
@@ -1373,7 +1907,12 @@ impl Database {
                      SET tempo_inicio = ?1, tempo_fim = NULL, nome_cliente = ?2,
                          forma_pagamento = NULL, valor_total_cents = NULL, id_unico = ?3
                      WHERE id_mesa = ?4",
-                    params![now, nome_cliente, generate_short_id(now, id_mesa as u64), id_mesa],
+                    params![
+                        now,
+                        nome_cliente,
+                        generate_short_id(now, id_mesa as u64),
+                        id_mesa
+                    ],
                 )?;
             }
             None => {
@@ -1381,7 +1920,12 @@ impl Database {
                     "INSERT INTO mesa_sessao (id_mesa, tempo_inicio, tempo_fim, nome_cliente,
                          forma_pagamento, valor_total_cents, id_unico)
                      VALUES (?1, ?2, NULL, ?3, NULL, NULL, ?4)",
-                    params![id_mesa, now, nome_cliente, generate_short_id(now, id_mesa as u64)],
+                    params![
+                        id_mesa,
+                        now,
+                        nome_cliente,
+                        generate_short_id(now, id_mesa as u64)
+                    ],
                 )?;
             }
         }
@@ -1491,11 +2035,15 @@ fn normalize_ticket_id(ticket_id: &str) -> AppResult<String> {
     let normalized = ticket_id.trim().to_uppercase();
 
     if normalized.is_empty() {
-        return Err(AppError::InvalidInput("Informe o ID do ticket.".to_string()));
+        return Err(AppError::InvalidInput(
+            "Informe o ID do ticket.".to_string(),
+        ));
     }
 
     if normalized.len() > 80 {
-        return Err(AppError::InvalidInput("ID do ticket muito longo.".to_string()));
+        return Err(AppError::InvalidInput(
+            "ID do ticket muito longo.".to_string(),
+        ));
     }
 
     Ok(normalized)
@@ -1513,7 +2061,10 @@ fn add_column_if_missing(
         .collect::<Result<Vec<_>, _>>()?;
 
     if !columns.iter().any(|existing| existing == column) {
-        connection.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"), [])?;
+        connection.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+            [],
+        )?;
     }
 
     Ok(())
@@ -1540,6 +2091,7 @@ fn map_product(row: &rusqlite::Row<'_>) -> rusqlite::Result<Product> {
         category_name: row.get(7)?,
         stock: row.get(8)?,
         reorder_level: row.get(9)?,
+        sold_quantity: row.get(13)?,
         description: row.get(10)?,
         created_at: row.get(11)?,
         updated_at: row.get(12)?,
@@ -1577,6 +2129,7 @@ fn map_mesa_produto(row: &rusqlite::Row<'_>) -> rusqlite::Result<MesaProdutoDeta
             category_name: row.get(12)?,
             stock: row.get(13)?,
             reorder_level: row.get(14)?,
+            sold_quantity: 0,
             description: row.get(15)?,
             created_at: row.get(16)?,
             updated_at: row.get(17)?,
@@ -1622,12 +2175,15 @@ fn map_category(row: &rusqlite::Row<'_>) -> rusqlite::Result<Category> {
 }
 
 fn map_local_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<LocalUser> {
+    let permissions_json = row.get::<_, String>(3)?;
+    let permissions = serde_json::from_str::<Vec<String>>(&permissions_json).unwrap_or_default();
     Ok(LocalUser {
         id: row.get(0)?,
         username: row.get(1)?,
         role: row.get(2)?,
-        active: row.get::<_, i64>(3)? == 1,
-        created_at: row.get(4)?,
+        permissions,
+        active: row.get::<_, i64>(4)? == 1,
+        created_at: row.get(5)?,
     })
 }
 
@@ -1687,7 +2243,9 @@ fn validate_product(input: ProductInput) -> AppResult<ProductInput> {
         .filter(|value| !value.is_empty());
 
     if name.is_empty() {
-        return Err(AppError::InvalidInput("Informe o nome do produto.".to_string()));
+        return Err(AppError::InvalidInput(
+            "Informe o nome do produto.".to_string(),
+        ));
     }
 
     if name.len() > 120 {
@@ -1709,7 +2267,9 @@ fn validate_product(input: ProductInput) -> AppResult<ProductInput> {
     }
 
     if input.cost_price_cents < 0 {
-        return Err(AppError::InvalidInput("O custo nao pode ser negativo.".to_string()));
+        return Err(AppError::InvalidInput(
+            "O custo nao pode ser negativo.".to_string(),
+        ));
     }
 
     if !matches!(unit.as_str(), "UN" | "KG" | "L" | "CX" | "PCT") {
@@ -1742,7 +2302,9 @@ fn validate_config(input: AppConfigInput) -> AppResult<AppConfigInput> {
         .filter(|value| !value.is_empty());
 
     if company_name.is_empty() {
-        return Err(AppError::InvalidInput("Informe o nome da empresa.".to_string()));
+        return Err(AppError::InvalidInput(
+            "Informe o nome da empresa.".to_string(),
+        ));
     }
 
     if company_name.len() > 100 {
@@ -1809,11 +2371,109 @@ fn validate_mesa_product_input(input: &MesaProdutoInput) -> AppResult<()> {
     Ok(())
 }
 
+fn normalize_sale_items(items: &[SaleCartItemInput]) -> AppResult<Vec<(i64, i64)>> {
+    if items.is_empty() {
+        return Err(AppError::InvalidInput(
+            "Adicione produtos ao carrinho.".to_string(),
+        ));
+    }
+
+    let mut aggregated = BTreeMap::new();
+    for item in items {
+        if item.product_id <= 0 {
+            return Err(AppError::InvalidInput("Produto invalido.".to_string()));
+        }
+
+        if item.quantidade <= 0 || item.quantidade > 999 {
+            return Err(AppError::InvalidInput(
+                "A quantidade deve ficar entre 1 e 999.".to_string(),
+            ));
+        }
+
+        *aggregated.entry(item.product_id).or_insert(0) += item.quantidade;
+    }
+
+    Ok(aggregated.into_iter().collect())
+}
+
+fn ensure_permission(
+    role: Option<&str>,
+    permissions: Option<&[String]>,
+    required_permission: &str,
+) -> AppResult<()> {
+    if role == Some("admin") {
+        return Ok(());
+    }
+
+    if permissions
+        .unwrap_or(&[])
+        .iter()
+        .any(|permission| permission == required_permission)
+    {
+        return Ok(());
+    }
+
+    Err(AppError::InvalidInput(
+        "Usuario sem permissao para executar esta acao.".to_string(),
+    ))
+}
+
+fn normalize_permissions_json(permissions: Option<Vec<String>>, role: &str) -> AppResult<String> {
+    let raw_permissions = if role == "admin" {
+        allowed_permissions()
+            .iter()
+            .map(|permission| permission.to_string())
+            .collect::<Vec<_>>()
+    } else {
+        permissions.unwrap_or_else(|| {
+            serde_json::from_str::<Vec<String>>(DEFAULT_OPERATOR_PERMISSIONS_JSON)
+                .unwrap_or_default()
+        })
+    };
+
+    let mut normalized = Vec::new();
+    for permission in raw_permissions {
+        if !allowed_permissions().contains(&permission.as_str()) {
+            return Err(AppError::InvalidInput(
+                "Permissao de usuario invalida.".to_string(),
+            ));
+        }
+
+        if !normalized.iter().any(|existing| existing == &permission) {
+            normalized.push(permission);
+        }
+    }
+
+    serde_json::to_string(&normalized)
+        .map_err(|error| AppError::Database(format!("Nao foi possivel salvar permissoes: {error}")))
+}
+
+fn allowed_permissions() -> &'static [&'static str] {
+    &[
+        "addTableProducts",
+        "removeTableProducts",
+        "closeTable",
+        MANAGE_PRODUCTS_PERMISSION,
+        MANAGE_USERS_PERMISSION,
+        "manageTickets",
+        "viewLogsReports",
+        "manageCompanyInfo",
+        "manageTicketValidity",
+        "manageTableCount",
+        "manageBackupTime",
+        "configurePrinters",
+        "manageCash",
+        "manageCashMovements",
+    ]
+}
+
 fn validate_payment_method(value: &str) -> AppResult<String> {
     let normalized = value.trim().to_lowercase();
     match normalized.as_str() {
         "pix" | "dinheiro" | "debito" | "credito" => Ok(normalized),
-        _ => Err(AppError::InvalidInput("Forma de pagamento invalida.".to_string())),
+        _ => Err(AppError::InvalidInput(
+            "Forma de pagamento invalida.".to_string(),
+        )),
     }
 }
 
@@ -1867,7 +2527,10 @@ mod tests {
             unique
         ));
         let _ = std::fs::remove_file(&path);
-        (Database::initialize(path.clone()).expect("database should initialize"), path)
+        (
+            Database::initialize(path.clone()).expect("database should initialize"),
+            path,
+        )
     }
 
     fn sample_product(name: &str, stock: i64) -> ProductInput {
@@ -1935,6 +2598,12 @@ mod tests {
     #[test]
     fn sale_decrements_stock_and_updates_reports() {
         let (database, path) = test_database();
+        database
+            .open_cash_register(OpenCashRegisterInput {
+                initial_balance_cents: 0,
+                operator_name: "admin".to_string(),
+            })
+            .expect("cash register should open");
         let product = database
             .create_product(sample_product("Cafe", 3))
             .expect("product should be created");
@@ -1975,7 +2644,10 @@ mod tests {
         let reports = database.get_reports().expect("reports should load");
         assert_eq!(reports.total_revenue_cents, 5_000);
         assert_eq!(reports.estimated_profit_cents, 3_000);
-        assert!(reports.low_stock_products.iter().any(|item| item.id == product.id));
+        assert!(reports
+            .low_stock_products
+            .iter()
+            .any(|item| item.id == product.id));
 
         let details = database
             .get_mesa_details(mesa.id)
@@ -1985,25 +2657,121 @@ mod tests {
     }
 
     #[test]
+    fn table_products_require_open_cash_register() {
+        let (database, path) = test_database();
+        let product = database
+            .create_product(sample_product("Suco", 4))
+            .expect("product should be created");
+        let mesa = database
+            .get_all_mesas()
+            .expect("tables should load")
+            .into_iter()
+            .find(|mesa| mesa.numero == 1)
+            .expect("table one should exist");
+
+        let error = database
+            .replace_mesa_produtos(
+                mesa.id,
+                None,
+                vec![MesaProdutoInput {
+                    id_mesa: mesa.id,
+                    id_produto: product.id,
+                    quantidade: 1,
+                }],
+            )
+            .expect_err("closed cash register should block adding products");
+
+        assert!(format!("{error}").contains("Abra o caixa"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn direct_cashier_sale_decrements_stock_and_updates_cash_balance() {
+        let (database, path) = test_database();
+        database
+            .open_cash_register(OpenCashRegisterInput {
+                initial_balance_cents: 2_000,
+                operator_name: "admin".to_string(),
+            })
+            .expect("cash register should open");
+        let product = database
+            .create_product(sample_product("Agua", 10))
+            .expect("product should be created");
+
+        let ticket = database
+            .fechar_venda_caixa(FecharVendaCaixaInput {
+                forma_pagamento: "dinheiro".to_string(),
+                valor_pago_cents: Some(2_500),
+                operator_name: Some("admin".to_string()),
+                items: vec![SaleCartItemInput {
+                    product_id: product.id,
+                    quantidade: 2,
+                }],
+            })
+            .expect("direct sale should be closed");
+
+        assert_eq!(ticket.total_cents, 2_000);
+        assert_eq!(ticket.troco_cents, Some(500));
+        let updated = database
+            .get_product(product.id)
+            .expect("product should still exist");
+        assert_eq!(updated.stock, 8);
+        assert_eq!(updated.sold_quantity, 2);
+        let register = database
+            .get_current_cash_register()
+            .expect("cash register query should work")
+            .expect("cash register should be open");
+        assert_eq!(register.expected_balance_cents, 4_000);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn local_users_and_categories_are_persisted() {
         let (database, path) = test_database();
 
+        assert!(!database
+            .has_configured_users()
+            .expect("configured user check should work"));
+
         let admin = database
+            .create_user(CreateUserInput {
+                username: "admin".to_string(),
+                password: "senha123".to_string(),
+                role: "admin".to_string(),
+                permissions: None,
+                requester_role: None,
+                requester_permissions: None,
+            })
+            .expect("first admin should be created");
+        assert_eq!(admin.role, "admin");
+        assert!(admin
+            .permissions
+            .contains(&MANAGE_USERS_PERMISSION.to_string()));
+
+        assert!(database
+            .has_configured_users()
+            .expect("configured user check should work"));
+
+        let auth = database
             .login(LoginInput {
                 username: "admin".to_string(),
-                password: "admin".to_string(),
+                password: "senha123".to_string(),
             })
-            .expect("default admin should login");
-        assert_eq!(admin.user.role, "admin");
+            .expect("created admin should login");
+        assert_eq!(auth.user.role, "admin");
 
         let operator = database
             .create_user(CreateUserInput {
                 username: "caixa".to_string(),
                 password: "1234".to_string(),
                 role: "operator".to_string(),
+                permissions: Some(vec!["manageProducts".to_string()]),
+                requester_role: Some("admin".to_string()),
+                requester_permissions: None,
             })
             .expect("operator should be created");
         assert_eq!(operator.role, "operator");
+        assert_eq!(operator.permissions, vec!["manageProducts".to_string()]);
 
         let category = database
             .create_category(
@@ -2011,6 +2779,8 @@ mod tests {
                     name: "Bebidas".to_string(),
                 },
                 Some("admin".to_string()),
+                Some("admin".to_string()),
+                None,
             )
             .expect("category should be created");
         assert_eq!(category.name, "Bebidas");
@@ -2019,6 +2789,25 @@ mod tests {
             .expect("categories should load")
             .iter()
             .any(|item| item.id == category.id));
+
+        let updated = database
+            .update_user(UpdateUserInput {
+                id: operator.id,
+                username: "caixa2".to_string(),
+                password: None,
+                role: "operator".to_string(),
+                permissions: Some(vec![
+                    "addTableProducts".to_string(),
+                    "closeTable".to_string(),
+                ]),
+                requester_role: Some("admin".to_string()),
+                requester_permissions: None,
+            })
+            .expect("operator permissions should update");
+        assert_eq!(
+            updated.permissions,
+            vec!["addTableProducts".to_string(), "closeTable".to_string()]
+        );
         let _ = std::fs::remove_file(path);
     }
 }

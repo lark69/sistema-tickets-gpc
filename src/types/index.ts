@@ -32,6 +32,7 @@ export interface AppConfig {
 export interface AppStatePayload {
   config: AppConfig;
   isFirstRun: boolean;
+  hasConfiguredUsers: boolean;
 }
 
 export interface Product {
@@ -45,6 +46,7 @@ export interface Product {
   categoryName?: string | null;
   stock: number;
   reorderLevel: number;
+  soldQuantity: number;
   description?: string | null;
   createdAt: number;
   updatedAt: number;
@@ -173,6 +175,18 @@ export interface FecharMesaInput {
   operatorName?: string | null;
 }
 
+export interface SaleCartItemInput {
+  productId: number;
+  quantidade: number;
+}
+
+export interface FecharVendaCaixaInput {
+  formaPagamento: FormaPagamento;
+  valorPagoCents?: number | null;
+  operatorName?: string | null;
+  items: SaleCartItemInput[];
+}
+
 export interface TicketProduto {
   nome: string;
   quantidade: number;
@@ -218,10 +232,27 @@ export interface ExportCsvResult {
   path: string;
 }
 
+export type UserPermission =
+  | "addTableProducts"
+  | "removeTableProducts"
+  | "closeTable"
+  | "manageProducts"
+  | "manageUsers"
+  | "manageTickets"
+  | "viewLogsReports"
+  | "manageCompanyInfo"
+  | "manageTicketValidity"
+  | "manageTableCount"
+  | "manageBackupTime"
+  | "configurePrinters"
+  | "manageCash"
+  | "manageCashMovements";
+
 export interface LocalUser {
   id: number;
   username: string;
   role: "admin" | "operator";
+  permissions: UserPermission[];
   active: boolean;
   createdAt: number;
 }

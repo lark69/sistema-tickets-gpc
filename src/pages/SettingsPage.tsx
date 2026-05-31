@@ -5,18 +5,20 @@ import { Select } from "../components/ui/Select";
 import { TextInput } from "../components/ui/TextInput";
 import { configService } from "../services/configService";
 import { printerService } from "../services/printerService";
-import type { AppConfig, PrinterInfo } from "../types";
+import type { AppConfig, LocalUser, PrinterInfo } from "../types";
 import { getErrorMessage } from "../utils/errors";
+import { hasPermission } from "../utils/permissions";
 import { validateConfig } from "../utils/validation";
 
 interface SettingsPageProps {
   config: AppConfig;
+  currentUser: LocalUser | null;
   saving: boolean;
   onSave: (config: AppConfig) => Promise<void>;
   onMessage: (message: string, tone: "success" | "error" | "info") => void;
 }
 
-export function SettingsPage({ config, saving, onSave, onMessage }: SettingsPageProps) {
+export function SettingsPage({ config, currentUser, saving, onSave, onMessage }: SettingsPageProps) {
   const [draft, setDraft] = useState(config);
   const [printers, setPrinters] = useState<PrinterInfo[]>([]);
   const [loadingPrinters, setLoadingPrinters] = useState(false);
@@ -71,6 +73,11 @@ export function SettingsPage({ config, saving, onSave, onMessage }: SettingsPage
       label: printer.isDefault ? `${printer.name} (padrão)` : printer.name
     }))
   ];
+  const canCompany = hasPermission(currentUser, "manageCompanyInfo");
+  const canTicketValidity = hasPermission(currentUser, "manageTicketValidity");
+  const canTableCount = hasPermission(currentUser, "manageTableCount");
+  const canBackupTime = hasPermission(currentUser, "manageBackupTime");
+  const canPrinter = hasPermission(currentUser, "configurePrinters");
 
   return (
     <form className="page-stack settings-page" onSubmit={handleSubmit}>
@@ -114,6 +121,7 @@ export function SettingsPage({ config, saving, onSave, onMessage }: SettingsPage
           <TextInput
             label="Nome da empresa"
             value={draft.companyName}
+            disabled={!canCompany}
             onChange={(event) =>
               setDraft((current) => ({ ...current, companyName: event.target.value }))
             }
@@ -121,6 +129,7 @@ export function SettingsPage({ config, saving, onSave, onMessage }: SettingsPage
           <TextInput
             label="CPF/CNPJ"
             value={draft.taxId}
+            disabled={!canCompany}
             onChange={(event) =>
               setDraft((current) => ({ ...current, taxId: event.target.value }))
             }
@@ -129,6 +138,7 @@ export function SettingsPage({ config, saving, onSave, onMessage }: SettingsPage
         <TextInput
           label="Frase de agradecimento"
           value={draft.thankYouMessage ?? ""}
+          disabled={!canCompany}
           onChange={(event) =>
             setDraft((current) => ({ ...current, thankYouMessage: event.target.value }))
           }
@@ -140,6 +150,7 @@ export function SettingsPage({ config, saving, onSave, onMessage }: SettingsPage
           min={1}
           max={3650}
           value={draft.validityDays}
+          disabled={!canTicketValidity}
           onChange={(event) =>
             setDraft((current) => ({
               ...current,
@@ -154,6 +165,7 @@ export function SettingsPage({ config, saving, onSave, onMessage }: SettingsPage
             min={1}
             max={100}
             value={draft.tableCount}
+            disabled={!canTableCount}
             onChange={(event) =>
               setDraft((current) => ({
                 ...current,
@@ -166,6 +178,7 @@ export function SettingsPage({ config, saving, onSave, onMessage }: SettingsPage
             label="Horário diário de backup"
             type="time"
             value={draft.backupTime ?? "23:00"}
+            disabled={!canBackupTime}
             onChange={(event) =>
               setDraft((current) => ({ ...current, backupTime: event.target.value }))
             }
@@ -183,6 +196,7 @@ export function SettingsPage({ config, saving, onSave, onMessage }: SettingsPage
           <Select
             label="Selecionar impressora"
             value={draft.printerName ?? ""}
+            disabled={!canPrinter}
             onChange={(event) =>
               setDraft((current) => ({ ...current, printerName: event.target.value || null }))
             }
@@ -194,6 +208,7 @@ export function SettingsPage({ config, saving, onSave, onMessage }: SettingsPage
             variant="secondary"
             icon={<RefreshCw size={18} />}
             loading={loadingPrinters}
+            disabled={!canPrinter}
             onClick={loadPrinters}
           >
             Atualizar
@@ -206,6 +221,7 @@ export function SettingsPage({ config, saving, onSave, onMessage }: SettingsPage
           max={64}
           value={draft.printWidthChars}
           icon={<Printer size={18} />}
+          disabled={!canPrinter}
           onChange={(event) =>
             setDraft((current) => ({
               ...current,

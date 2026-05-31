@@ -17,6 +17,10 @@ interface MesaModalProps {
   products: Product[];
   saving: boolean;
   closing: boolean;
+  cashOpen: boolean;
+  canAddProducts: boolean;
+  canRemoveProducts: boolean;
+  canCloseTable: boolean;
   onCancel: () => void;
   onSave: (items: DraftItem[], nomeCliente: string) => Promise<void>;
   onCheckout: (
@@ -32,6 +36,10 @@ export function MesaModal({
   products,
   saving,
   closing,
+  cashOpen,
+  canAddProducts,
+  canRemoveProducts,
+  canCloseTable,
   onCancel,
   onSave,
   onCheckout
@@ -53,8 +61,11 @@ export function MesaModal({
   }, [products, query]);
 
   const subtotal = items.reduce((sum, item) => sum + item.product.priceCents * item.quantidade, 0);
+  const canUseCatalog = cashOpen && canAddProducts;
 
   function addProduct(product: Product) {
+    if (!canUseCatalog) return;
+
     setItems((current) => {
       const existing = current.find((item) => item.product.id === product.id);
       if (existing) {
@@ -67,6 +78,8 @@ export function MesaModal({
   }
 
   function removeOne(productId: number) {
+    if (!canRemoveProducts) return;
+
     setItems((current) =>
       current
         .map((item) =>
@@ -105,7 +118,12 @@ export function MesaModal({
         footer={
           <>
             {items.length > 0 ? (
-              <Button type="button" variant="secondary" onClick={() => setCheckoutOpen(true)}>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={!cashOpen || !canCloseTable}
+                onClick={() => setCheckoutOpen(true)}
+              >
                 Fechar Mesa
               </Button>
             ) : null}
@@ -121,6 +139,12 @@ export function MesaModal({
         <div className="mesa-modal-grid">
           <section className="mesa-column">
             <h3>Produtos adicionados</h3>
+            {!cashOpen ? (
+              <div className="inline-alert">Caixa fechado. Abra o caixa para adicionar produtos ou fechar a mesa.</div>
+            ) : null}
+            {cashOpen && !canAddProducts ? (
+              <div className="inline-alert">Usuario sem permissao para adicionar produtos a mesa.</div>
+            ) : null}
             <div className="mesa-items">
               {items.length === 0 ? (
                 <p className="muted-text">Nenhum produto adicionado</p>
@@ -131,7 +155,12 @@ export function MesaModal({
                     <span>x{item.quantidade}</span>
                     <span>{formatCurrency(item.product.priceCents)}</span>
                     <strong>{formatCurrency(item.product.priceCents * item.quantidade)}</strong>
-                    <button type="button" className="icon-button" onClick={() => removeOne(item.product.id)}>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      disabled={!canRemoveProducts}
+                      onClick={() => removeOne(item.product.id)}
+                    >
                       <Trash2 size={16} />
                     </button>
                   </div>
@@ -164,6 +193,7 @@ export function MesaModal({
                     key={product.id}
                     type="button"
                     className={`catalog-item ${product.stock <= quantity ? "catalog-item-warning" : ""}`}
+                    disabled={!canUseCatalog}
                     onClick={() => addProduct(product)}
                   >
                     <span>{product.name}</span>

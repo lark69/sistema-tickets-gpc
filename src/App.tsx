@@ -1,3 +1,4 @@
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useMemo, useState } from "react";
 import { AppLayout } from "./components/layout/AppLayout";
 import { ProductForm } from "./components/products/ProductForm";
@@ -9,6 +10,7 @@ import { InitialSetupPage } from "./pages/InitialSetupPage";
 import { CashRegisterPage } from "./pages/CashRegisterPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { InventoryPage } from "./pages/InventoryPage";
+import { FirstAdminPage } from "./pages/FirstAdminPage";
 import { LoginPage } from "./pages/LoginPage";
 import { LogsPage } from "./pages/LogsPage";
 import { MesasDashboardPage } from "./pages/MesasDashboardPage";
@@ -23,11 +25,21 @@ import { printerService } from "./services/printerService";
 import { productService } from "./services/productService";
 import type { AppConfig, AppRoute, Category, LocalUser, Product, ProductInput, ToastState } from "./types";
 import { getErrorMessage } from "./utils/errors";
+import { hasAnyPermission, hasPermission } from "./utils/permissions";
 
 type ShellMode = "boot" | "onboarding" | "setup" | "app";
 
 export function App() {
-  const { config, setConfig, products, loading, error, refreshProducts } = useAppData();
+  const {
+    config,
+    setConfig,
+    products,
+    hasConfiguredUsers,
+    setHasConfiguredUsers,
+    loading,
+    error,
+    refreshProducts
+  } = useAppData();
   const [mode, setMode] = useState<ShellMode>("boot");
   const [route, setRoute] = useState<AppRoute>("home");
   const [saving, setSaving] = useState(false);
@@ -39,6 +51,24 @@ export function App() {
   const [toast, setToast] = useState<ToastState | null>(null);
 
   useTheme(config.theme);
+
+  useEffect(() => {
+    function handleFullscreenShortcut(event: KeyboardEvent) {
+      if (event.key !== "F11") {
+        return;
+      }
+
+      event.preventDefault();
+      const appWindow = getCurrentWindow();
+      appWindow
+        .isFullscreen()
+        .then((isFullscreen) => appWindow.setFullscreen(!isFullscreen))
+        .catch(() => undefined);
+    }
+
+    window.addEventListener("keydown", handleFullscreenShortcut);
+    return () => window.removeEventListener("keydown", handleFullscreenShortcut);
+  }, []);
 
   useEffect(() => {
     if (loading || error || mode !== "boot") {
@@ -69,6 +99,41 @@ export function App() {
       adminService.listCategories().then(setCategories).catch(() => undefined);
     }
   }, [mode]);
+
+  async function refreshCategoriesAndProducts() {
+    const [nextCategories] = await Promise.all([
+      adminService.listCategories(),
+      refreshProducts()
+    ]);
+    setCategories(nextCategories);
+  }
+
+  const canManageProducts = hasPermission(currentUser, "manageProducts");
+  const canManageTickets = hasPermission(currentUser, "manageTickets");
+  const canViewLogsReports = hasPermission(currentUser, "viewLogsReports");
+  const canManageUsers = hasPermission(currentUser, "manageUsers");
+  const canManageSettings = hasAnyPermission(currentUser, [
+    "manageCompanyInfo",
+    "manageTicketValidity",
+    "manageTableCount",
+    "manageBackupTime",
+    "configurePrinters"
+  ]);
+  const canManageCash = hasPermission(currentUser, "manageCash");
+  const canManageCashMovements = hasPermission(currentUser, "manageCashMovements");
+  const allowedMenuRoutes = useMemo<AppRoute[]>(() => {
+    const routes: AppRoute[] = [];
+    if (canManageProducts) routes.push("inventory");
+    if (canViewLogsReports) routes.push("reports", "logs");
+    if (canManageTickets) routes.push("verify-ticket");
+    if (canManageSettings) routes.push("settings");
+    if (canManageUsers) routes.push("users");
+    return routes;
+  }, [canManageProducts, canManageSettings, canManageTickets, canManageUsers, canViewLogsReports]);
+
+  function restricted(message = "Usuario sem permissao para acessar esta area.") {
+    return <section className="empty-state"><h2>{message}</h2></section>;
+  }
 
   useEffect(() => {
     if (mode !== "app" || !config.backupTime) {
@@ -157,6 +222,11 @@ export function App() {
   }
 
   async function handleSaveProduct(input: ProductInput) {
+    if (!canManageProducts) {
+      showMessage("Usuario sem permissao para gerenciar produtos.", "error");
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -179,6 +249,11 @@ export function App() {
   }
 
   async function handleDeleteProduct(product: Product) {
+    if (!canManageProducts) {
+      showMessage("Usuario sem permissao para excluir produtos.", "error");
+      return;
+    }
+
     const confirmed = window.confirm(`Excluir o produto "${product.name}"?`);
 
     if (!confirmed) {
@@ -196,6 +271,11 @@ export function App() {
 
   async function handlePrint(quantity: number) {
     if (!printProduct) {
+      return;
+    }
+    if (!canManageTickets) {
+      showMessage("Usuario sem permissao para gerenciar tickets.", "error");
+      setPrintProduct(null);
       return;
     }
 
@@ -217,10 +297,14 @@ export function App() {
 
   const content = useMemo(() => {
     if (route === "new-product") {
+      if (!canManageProducts) {
+        return restricted("Usuario sem permissao para criar produtos.");
+      }
       return (
         <ProductForm
           categories={categories}
           operatorName={currentUser?.username}
+          requester={currentUser}
           onCategoryCreated={(category) => setCategories((current) => [...current, category])}
           onMessage={showMessage}
           saving={saving}
@@ -234,11 +318,15 @@ export function App() {
     }
 
     if (route === "edit-product" && editingProduct) {
+      if (!canManageProducts) {
+        return restricted("Usuario sem permissao para editar produtos.");
+      }
       return (
         <ProductForm
           product={editingProduct}
           categories={categories}
           operatorName={currentUser?.username}
+          requester={currentUser}
           onCategoryCreated={(category) => setCategories((current) => [...current, category])}
           onMessage={showMessage}
           saving={saving}
@@ -255,7 +343,11 @@ export function App() {
       return (
         <DashboardPage
           products={products}
-          canManage={currentUser?.role === "admin"}
+          categories={categories}
+          canManage={canManageProducts}
+          canManageTickets={canManageTickets}
+          operatorName={currentUser?.username}
+          requester={currentUser}
           onAdd={() => {
             setEditingProduct(null);
             setRoute("new-product");
@@ -266,14 +358,20 @@ export function App() {
           }}
           onDelete={handleDeleteProduct}
           onPrint={setPrintProduct}
+          onCategoriesChanged={refreshCategoriesAndProducts}
+          onMessage={showMessage}
         />
       );
     }
 
     if (route === "settings") {
+      if (!canManageSettings) {
+        return restricted("Usuario sem permissao para abrir configuracoes.");
+      }
       return (
         <SettingsPage
           config={config}
+          currentUser={currentUser}
           saving={saving}
           onSave={handleSaveSettings}
           onMessage={showMessage}
@@ -282,18 +380,41 @@ export function App() {
     }
 
     if (route === "verify-ticket") {
+      if (!canManageTickets) {
+        return restricted("Usuario sem permissao para gerenciar tickets.");
+      }
       return <VerifyTicketPage onMessage={showMessage} />;
     }
 
     if (route === "logs") {
+      if (!canViewLogsReports) {
+        return restricted("Usuario sem permissao para visualizar logs.");
+      }
       return <LogsPage onMessage={showMessage} />;
     }
 
     if (route === "cash" && currentUser) {
-      return <CashRegisterPage currentUser={currentUser} onMessage={showMessage} />;
+      if (!canManageCash && !canManageCashMovements) {
+        return restricted("Usuario sem permissao para acessar o caixa.");
+      }
+      return (
+        <CashRegisterPage
+          currentUser={currentUser}
+          products={products}
+          canManageCash={canManageCash}
+          canManageCashMovements={canManageCashMovements}
+          onProductsChanged={async () => {
+            await refreshProducts();
+          }}
+          onMessage={showMessage}
+        />
+      );
     }
 
     if (route === "inventory" && currentUser) {
+      if (!canManageProducts) {
+        return restricted("Usuario sem permissao para gerenciar estoque.");
+      }
       return (
         <InventoryPage
           products={products}
@@ -307,19 +428,23 @@ export function App() {
     }
 
     if (route === "reports") {
+      if (!canViewLogsReports) {
+        return restricted("Usuario sem permissao para visualizar relatorios.");
+      }
       return <ReportsPage onMessage={showMessage} />;
     }
 
-    if (route === "users") {
-      if (currentUser?.role !== "admin") {
-        return <section className="empty-state"><h2>Acesso restrito ao administrador.</h2></section>;
+    if (route === "users" && currentUser) {
+      if (!canManageUsers) {
+        return restricted("Usuario sem permissao para gerenciar usuarios.");
       }
-      return <UsersPage onMessage={showMessage} />;
+      return <UsersPage currentUser={currentUser} onMessage={showMessage} />;
     }
 
     return (
       <MesasDashboardPage
         products={products}
+        currentUser={currentUser}
         operatorName={currentUser?.username ?? "caixa"}
         onProductsChanged={async () => {
           await refreshProducts();
@@ -327,7 +452,22 @@ export function App() {
         onMessage={showMessage}
       />
     );
-  }, [categories, config, currentUser, editingProduct, products, route, saving]);
+  }, [
+    canManageCash,
+    canManageCashMovements,
+    canManageProducts,
+    canManageSettings,
+    canManageTickets,
+    canManageUsers,
+    canViewLogsReports,
+    categories,
+    config,
+    currentUser,
+    editingProduct,
+    products,
+    route,
+    saving
+  ]);
 
   const topbarRoute: AppRoute =
     route === "new-product" || route === "edit-product" ? "dashboard" : route;
@@ -350,10 +490,28 @@ export function App() {
         <OnboardingPage saving={saving} onFinish={handleFinishOnboarding} />
       ) : mode === "setup" ? (
         <InitialSetupPage config={config} saving={saving} onSave={handleInitialSetup} />
+      ) : !hasConfiguredUsers ? (
+        <FirstAdminPage
+          onCreated={(user) => {
+            setHasConfiguredUsers(true);
+            setCurrentUser(user);
+          }}
+          onMessage={showMessage}
+        />
       ) : !currentUser ? (
         <LoginPage onLogin={setCurrentUser} onMessage={showMessage} />
       ) : (
-        <AppLayout route={topbarRoute} showUsers={currentUser.role === "admin"} onNavigate={setRoute}>
+        <AppLayout
+          route={topbarRoute}
+          showUsers={canManageUsers}
+          allowedMenuRoutes={allowedMenuRoutes}
+          currentUser={currentUser}
+          onSwitchUser={() => {
+            setCurrentUser(null);
+            setRoute("home");
+          }}
+          onNavigate={setRoute}
+        >
           {content}
         </AppLayout>
       )}

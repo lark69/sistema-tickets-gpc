@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub struct AppStatePayload {
     pub config: AppConfig,
     pub is_first_run: bool,
+    pub has_configured_users: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -53,6 +54,23 @@ pub struct CategoryInput {
     pub name: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CategoryUpdateInput {
+    pub id: i64,
+    pub name: String,
+    pub requester_role: Option<String>,
+    pub requester_permissions: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteCategoryInput {
+    pub id: i64,
+    pub requester_role: Option<String>,
+    pub requester_permissions: Option<Vec<String>>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Product {
@@ -66,6 +84,7 @@ pub struct Product {
     pub category_name: Option<String>,
     pub stock: i64,
     pub reorder_level: i64,
+    pub sold_quantity: i64,
     pub description: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
@@ -232,6 +251,22 @@ pub struct FecharMesaInput {
     pub operator_name: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaleCartItemInput {
+    pub product_id: i64,
+    pub quantidade: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FecharVendaCaixaInput {
+    pub forma_pagamento: String,
+    pub valor_pago_cents: Option<i64>,
+    pub operator_name: Option<String>,
+    pub items: Vec<SaleCartItemInput>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TicketProduto {
@@ -360,6 +395,7 @@ pub struct LocalUser {
     pub id: i64,
     pub username: String,
     pub role: String,
+    pub permissions: Vec<String>,
     pub active: bool,
     pub created_at: i64,
 }
@@ -377,6 +413,29 @@ pub struct CreateUserInput {
     pub username: String,
     pub password: String,
     pub role: String,
+    pub permissions: Option<Vec<String>>,
+    pub requester_role: Option<String>,
+    pub requester_permissions: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateUserInput {
+    pub id: i64,
+    pub username: String,
+    pub password: Option<String>,
+    pub role: String,
+    pub permissions: Option<Vec<String>>,
+    pub requester_role: Option<String>,
+    pub requester_permissions: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteUserInput {
+    pub id: i64,
+    pub requester_role: Option<String>,
+    pub requester_permissions: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -11,8 +11,8 @@ interface LoginPageProps {
 }
 
 export function LoginPage({ onLogin, onMessage }: LoginPageProps) {
-  const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("admin");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {

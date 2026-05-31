@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { MesaCard } from "../components/mesa/MesaCard";
 import { MesaModal } from "../components/mesa/MesaModal";
+import { adminService } from "../services/adminService";
 import { mesaService } from "../services/mesaService";
-import type { FormaPagamento, Mesa, MesaDetailed, Product } from "../types";
+import type { FormaPagamento, LocalUser, Mesa, MesaDetailed, Product } from "../types";
 import { getErrorMessage } from "../utils/errors";
+import { hasPermission } from "../utils/permissions";
 
 interface DraftItem {
   product: Product;
@@ -12,6 +14,7 @@ interface DraftItem {
 
 interface MesasDashboardPageProps {
   products: Product[];
+  currentUser: LocalUser | null;
   operatorName: string;
   onProductsChanged: () => Promise<void>;
   onMessage: (message: string, tone: "success" | "error" | "info") => void;
@@ -19,6 +22,7 @@ interface MesasDashboardPageProps {
 
 export function MesasDashboardPage({
   products,
+  currentUser,
   operatorName,
   onProductsChanged,
   onMessage
@@ -26,6 +30,7 @@ export function MesasDashboardPage({
   const [mesas, setMesas] = useState<Mesa[]>([]);
   const [details, setDetails] = useState<MesaDetailed | null>(null);
   const [loading, setLoading] = useState(true);
+  const [cashOpen, setCashOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [closing, setClosing] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -33,7 +38,12 @@ export function MesasDashboardPage({
   async function loadMesas() {
     setLoading(true);
     try {
-      setMesas(await mesaService.listMesas());
+      const [nextMesas, register] = await Promise.all([
+        mesaService.listMesas(),
+        adminService.getCurrentCashRegister()
+      ]);
+      setMesas(nextMesas);
+      setCashOpen(Boolean(register));
     } catch (err) {
       onMessage(getErrorMessage(err), "error");
     } finally {
@@ -43,7 +53,12 @@ export function MesasDashboardPage({
 
   async function openMesa(mesa: Mesa) {
     try {
-      setDetails(await mesaService.getDetails(mesa.id));
+      const [nextDetails, register] = await Promise.all([
+        mesaService.getDetails(mesa.id),
+        adminService.getCurrentCashRegister()
+      ]);
+      setCashOpen(Boolean(register));
+      setDetails(nextDetails);
     } catch (err) {
       onMessage(getErrorMessage(err), "error");
     }
@@ -82,6 +97,10 @@ export function MesasDashboardPage({
     valorPagoCents?: number | null
   ) {
     if (!details) return;
+    if (!cashOpen) {
+      onMessage("Abra o caixa antes de fechar uma mesa.", "error");
+      return;
+    }
     setClosing(true);
     try {
       await mesaService.saveMesa({
@@ -148,6 +167,10 @@ export function MesasDashboardPage({
           products={products}
           saving={saving}
           closing={closing}
+          cashOpen={cashOpen}
+          canAddProducts={hasPermission(currentUser, "addTableProducts")}
+          canRemoveProducts={hasPermission(currentUser, "removeTableProducts")}
+          canCloseTable={hasPermission(currentUser, "closeTable")}
           onCancel={() => setDetails(null)}
           onSave={saveMesa}
           onCheckout={checkoutMesa}

@@ -17,7 +17,11 @@ pub fn print_tickets(
         ));
     }
 
-    let printer_name = match config.printer_name.as_ref().filter(|value| !value.is_empty()) {
+    let printer_name = match config
+        .printer_name
+        .as_ref()
+        .filter(|value| !value.is_empty())
+    {
         Some(name) => name.clone(),
         None => default_printer_name()?.ok_or_else(|| {
             AppError::Printer(
@@ -49,7 +53,11 @@ pub fn list_printers() -> AppResult<Vec<PrinterInfo>> {
 }
 
 pub fn print_pdv_ticket(config: &AppConfig, ticket: &TicketData) -> AppResult<()> {
-    let printer_name = match config.printer_name.as_ref().filter(|value| !value.is_empty()) {
+    let printer_name = match config
+        .printer_name
+        .as_ref()
+        .filter(|value| !value.is_empty())
+    {
         Some(name) => name.clone(),
         None => default_printer_name()?.ok_or_else(|| {
             AppError::Printer(
@@ -78,7 +86,10 @@ fn build_ticket_payload(config: &AppConfig, product: &Product, ticket: &IssuedTi
     bytes.extend([ESC, b'a', 0]);
     push_line(&mut bytes, &"-".repeat(width));
     push_wrapped_line(&mut bytes, &format!("Produto: {}", product.name), width);
-    push_line(&mut bytes, &format!("Valor: {}", format_currency(product.price_cents)));
+    push_line(
+        &mut bytes,
+        &format!("Valor: {}", format_currency(product.price_cents)),
+    );
     push_line(&mut bytes, &format!("Validade: {}", validity_label));
     push_wrapped_line(&mut bytes, &format!("ID: {}", ticket.ticket_id), width);
     push_line(&mut bytes, &"-".repeat(width));
@@ -105,14 +116,20 @@ fn build_pdv_ticket_payload(config: &AppConfig, ticket: &TicketData) -> Vec<u8> 
     bytes.extend([ESC, b'E', 0]);
     push_line(&mut bytes, &config.tax_id);
     push_line(&mut bytes, "");
-    push_line(&mut bytes, &format!("Mesa {:02}", ticket.numero_mesa));
+    if ticket.numero_mesa > 0 {
+        push_line(&mut bytes, &format!("Mesa {:02}", ticket.numero_mesa));
+    } else {
+        push_line(&mut bytes, "Venda direta");
+    }
     push_line(&mut bytes, &format!("ID: {}", ticket.id_unico));
 
     if let Some(cliente) = &ticket.nome_cliente {
         push_wrapped_line(&mut bytes, &format!("Cliente: {cliente}"), width);
     }
 
-    push_line(&mut bytes, &format!("Tempo: {}", ticket.tempo_permanencia));
+    if ticket.numero_mesa > 0 {
+        push_line(&mut bytes, &format!("Tempo: {}", ticket.tempo_permanencia));
+    }
     push_line(&mut bytes, "");
     bytes.extend([ESC, b'a', 0]);
     push_line(&mut bytes, &"-".repeat(width));
@@ -130,7 +147,10 @@ fn build_pdv_ticket_payload(config: &AppConfig, ticket: &TicketData) -> Vec<u8> 
     }
 
     push_line(&mut bytes, &"-".repeat(width));
-    push_line(&mut bytes, &format!("Subtotal: {}", format_currency(ticket.subtotal_cents)));
+    push_line(
+        &mut bytes,
+        &format!("Subtotal: {}", format_currency(ticket.subtotal_cents)),
+    );
 
     if ticket.acrescimo_cents > 0 {
         push_line(
@@ -140,12 +160,21 @@ fn build_pdv_ticket_payload(config: &AppConfig, ticket: &TicketData) -> Vec<u8> 
     }
 
     bytes.extend([ESC, b'E', 1]);
-    push_line(&mut bytes, &format!("TOTAL: {}", format_currency(ticket.total_cents)));
+    push_line(
+        &mut bytes,
+        &format!("TOTAL: {}", format_currency(ticket.total_cents)),
+    );
     bytes.extend([ESC, b'E', 0]);
-    push_line(&mut bytes, &format!("Pagamento: {}", payment_label(&ticket.forma_pagamento)));
+    push_line(
+        &mut bytes,
+        &format!("Pagamento: {}", payment_label(&ticket.forma_pagamento)),
+    );
 
     if let Some(valor_pago) = ticket.valor_pago_cents {
-        push_line(&mut bytes, &format!("Valor pago: {}", format_currency(valor_pago)));
+        push_line(
+            &mut bytes,
+            &format!("Valor pago: {}", format_currency(valor_pago)),
+        );
     }
 
     if let Some(troco) = ticket.troco_cents {
@@ -237,9 +266,16 @@ fn platform_list_printers() -> AppResult<Vec<PrinterInfo>> {
     }
 
     const CREATE_NO_WINDOW: u32 = 0x08000000;
-    let script = "Get-CimInstance Win32_Printer | Select-Object Name, Default | ConvertTo-Json -Compress";
+    let script =
+        "Get-CimInstance Win32_Printer | Select-Object Name, Default | ConvertTo-Json -Compress";
     let output = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script])
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ])
         .creation_flags(CREATE_NO_WINDOW)
         .output()?;
 
@@ -329,7 +365,12 @@ fn send_raw_to_printer(printer_name: &str, payload: &[u8]) -> AppResult<()> {
     let mut printer_name_w = to_wide(printer_name);
 
     unsafe {
-        if OpenPrinterW(printer_name_w.as_mut_ptr(), &mut handle, std::ptr::null_mut()) == 0 {
+        if OpenPrinterW(
+            printer_name_w.as_mut_ptr(),
+            &mut handle,
+            std::ptr::null_mut(),
+        ) == 0
+        {
             return Err(AppError::Printer(format!(
                 "Nao foi possivel abrir a impressora '{printer_name}'."
             )));
@@ -346,13 +387,17 @@ fn send_raw_to_printer(printer_name: &str, payload: &[u8]) -> AppResult<()> {
         let job_id = StartDocPrinterW(handle, 1, &doc_info);
         if job_id == 0 {
             ClosePrinter(handle);
-            return Err(AppError::Printer("Nao foi possivel iniciar o job de impressao.".to_string()));
+            return Err(AppError::Printer(
+                "Nao foi possivel iniciar o job de impressao.".to_string(),
+            ));
         }
 
         if StartPagePrinter(handle) == 0 {
             EndDocPrinter(handle);
             ClosePrinter(handle);
-            return Err(AppError::Printer("Nao foi possivel iniciar a pagina de impressao.".to_string()));
+            return Err(AppError::Printer(
+                "Nao foi possivel iniciar a pagina de impressao.".to_string(),
+            ));
         }
 
         let mut written = 0u32;

@@ -1,13 +1,14 @@
 use crate::error::{CommandError, CommandResult};
 use crate::models::{
     AppConfig, AppConfigInput, AppStatePayload, AuthPayload, BackupResult, CashMovement,
-    CashMovementInput, CashRegister, Category, CategoryInput, CloseCashRegisterInput,
-    CreateMesaInput, CreateUserInput, DeleteProductInput, ExportCsvInput, ExportCsvResult,
-    FecharMesaInput, LocalUser, LogEntry, LogFiltros, LoginInput, Mesa, MesaDetailed,
+    CashMovementInput, CashRegister, Category, CategoryInput, CategoryUpdateInput,
+    CloseCashRegisterInput, CreateMesaInput, CreateUserInput, DeleteCategoryInput,
+    DeleteProductInput, DeleteUserInput, ExportCsvInput, ExportCsvResult, FecharMesaInput,
+    FecharVendaCaixaInput, LocalUser, LogEntry, LogFiltros, LoginInput, Mesa, MesaDetailed,
     MesaProdutoDetalhado, MesaProdutoInput, MesaSessao, OpenCashRegisterInput, PrintResult,
     PrintTicketsInput, PrinterInfo, Product, ProductInput, ProductUpdateInput, ReportsPayload,
     SaveMesaInput, StockAdjustInput, StockMovement, TicketData, UpdateMesaClienteInput,
-    VerifyTicketInput, VerifyTicketResult,
+    UpdateUserInput, VerifyTicketInput, VerifyTicketResult,
 };
 use crate::{printer, AppContext};
 use tauri::{Manager, State};
@@ -16,10 +17,15 @@ use tauri::{Manager, State};
 pub fn get_app_state(state: State<'_, AppContext>) -> CommandResult<AppStatePayload> {
     let config = state.database.get_config().map_err(CommandError::from)?;
     let is_first_run = !config.onboarding_completed || !config.setup_completed;
+    let has_configured_users = state
+        .database
+        .has_configured_users()
+        .map_err(CommandError::from)?;
 
     Ok(AppStatePayload {
         config,
         is_first_run,
+        has_configured_users,
     })
 }
 
@@ -36,7 +42,10 @@ pub fn save_app_config(
     input: AppConfigInput,
     state: State<'_, AppContext>,
 ) -> CommandResult<AppConfig> {
-    state.database.save_config(input).map_err(CommandError::from)
+    state
+        .database
+        .save_config(input)
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -45,11 +54,11 @@ pub fn list_products(state: State<'_, AppContext>) -> CommandResult<Vec<Product>
 }
 
 #[tauri::command]
-pub fn create_product(
-    input: ProductInput,
-    state: State<'_, AppContext>,
-) -> CommandResult<Product> {
-    state.database.create_product(input).map_err(CommandError::from)
+pub fn create_product(input: ProductInput, state: State<'_, AppContext>) -> CommandResult<Product> {
+    state
+        .database
+        .create_product(input)
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -57,11 +66,17 @@ pub fn update_product(
     input: ProductUpdateInput,
     state: State<'_, AppContext>,
 ) -> CommandResult<Product> {
-    state.database.update_product(input).map_err(CommandError::from)
+    state
+        .database
+        .update_product(input)
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
-pub fn delete_product(input: DeleteProductInput, state: State<'_, AppContext>) -> CommandResult<()> {
+pub fn delete_product(
+    input: DeleteProductInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<()> {
     state
         .database
         .delete_product(input.product_id)
@@ -77,11 +92,35 @@ pub fn list_categories(state: State<'_, AppContext>) -> CommandResult<Vec<Catego
 pub fn create_category(
     input: CategoryInput,
     operator_name: Option<String>,
+    requester_role: Option<String>,
+    requester_permissions: Option<Vec<String>>,
     state: State<'_, AppContext>,
 ) -> CommandResult<Category> {
     state
         .database
-        .create_category(input, operator_name)
+        .create_category(input, operator_name, requester_role, requester_permissions)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn update_category(
+    input: CategoryUpdateInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<Category> {
+    state
+        .database
+        .update_category(input)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn delete_category(
+    input: DeleteCategoryInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<()> {
+    state
+        .database
+        .delete_category(input)
         .map_err(CommandError::from)
 }
 
@@ -90,7 +129,10 @@ pub fn adjust_stock(
     input: StockAdjustInput,
     state: State<'_, AppContext>,
 ) -> CommandResult<StockMovement> {
-    state.database.adjust_stock(input).map_err(CommandError::from)
+    state
+        .database
+        .adjust_stock(input)
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -194,19 +236,22 @@ pub fn get_all_mesas(state: State<'_, AppContext>) -> CommandResult<Vec<Mesa>> {
 
 #[tauri::command]
 pub fn create_mesa(input: CreateMesaInput, state: State<'_, AppContext>) -> CommandResult<Mesa> {
-    state.database.create_mesa(input).map_err(CommandError::from)
+    state
+        .database
+        .create_mesa(input)
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
 pub fn get_mesa_by_id(id_mesa: i64, state: State<'_, AppContext>) -> CommandResult<Mesa> {
-    state.database.get_mesa_by_id(id_mesa).map_err(CommandError::from)
+    state
+        .database
+        .get_mesa_by_id(id_mesa)
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
-pub fn get_mesa_details(
-    id_mesa: i64,
-    state: State<'_, AppContext>,
-) -> CommandResult<MesaDetailed> {
+pub fn get_mesa_details(id_mesa: i64, state: State<'_, AppContext>) -> CommandResult<MesaDetailed> {
     state
         .database
         .get_mesa_details(id_mesa)
@@ -269,10 +314,7 @@ pub fn update_mesa_cliente(
 }
 
 #[tauri::command]
-pub fn get_mesa_sessao(
-    id_mesa: i64,
-    state: State<'_, AppContext>,
-) -> CommandResult<MesaSessao> {
+pub fn get_mesa_sessao(id_mesa: i64, state: State<'_, AppContext>) -> CommandResult<MesaSessao> {
     state
         .database
         .get_mesa_sessao(id_mesa)
@@ -288,6 +330,21 @@ pub fn fechar_mesa(
     let ticket_data = state
         .database
         .fechar_mesa(input)
+        .map_err(CommandError::from)?;
+
+    printer::print_pdv_ticket(&config, &ticket_data).map_err(CommandError::from)?;
+    Ok(ticket_data)
+}
+
+#[tauri::command]
+pub fn fechar_venda_caixa(
+    input: FecharVendaCaixaInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<TicketData> {
+    let config = state.database.get_config().map_err(CommandError::from)?;
+    let ticket_data = state
+        .database
+        .fechar_venda_caixa(input)
         .map_err(CommandError::from)?;
 
     printer::print_pdv_ticket(&config, &ticket_data).map_err(CommandError::from)?;
@@ -313,8 +370,33 @@ pub fn list_users(state: State<'_, AppContext>) -> CommandResult<Vec<LocalUser>>
 }
 
 #[tauri::command]
-pub fn create_user(input: CreateUserInput, state: State<'_, AppContext>) -> CommandResult<LocalUser> {
-    state.database.create_user(input).map_err(CommandError::from)
+pub fn create_user(
+    input: CreateUserInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<LocalUser> {
+    state
+        .database
+        .create_user(input)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn update_user(
+    input: UpdateUserInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<LocalUser> {
+    state
+        .database
+        .update_user(input)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn delete_user(input: DeleteUserInput, state: State<'_, AppContext>) -> CommandResult<()> {
+    state
+        .database
+        .delete_user(input)
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]

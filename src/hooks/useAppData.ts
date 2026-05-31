@@ -8,6 +8,7 @@ import { getErrorMessage } from "../utils/errors";
 export function useAppData() {
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   const [products, setProducts] = useState<Product[]>([]);
+  const [hasConfiguredUsers, setHasConfiguredUsers] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -28,6 +29,7 @@ export function useAppData() {
       ]);
 
       setConfig(state.config);
+      setHasConfiguredUsers(state.hasConfiguredUsers);
       setProducts(nextProducts);
       return state;
     } catch (err) {
@@ -49,11 +51,13 @@ export function useAppData() {
       setConfig,
       products,
       setProducts,
+      hasConfiguredUsers,
+      setHasConfiguredUsers,
       loading,
       error,
       refreshApp,
       refreshProducts
     }),
-    [config, products, loading, error, refreshApp, refreshProducts]
+    [config, products, hasConfiguredUsers, loading, error, refreshApp, refreshProducts]
   );
 }

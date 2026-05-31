@@ -1,28 +1,41 @@
 import { Plus, Search } from "lucide-react";
 import { useMemo, useState } from "react";
+import { CategoryManager } from "../components/products/CategoryManager";
 import { ProductCard } from "../components/products/ProductCard";
 import { Button } from "../components/ui/Button";
 import { EmptyState } from "../components/ui/EmptyState";
 import { TextInput } from "../components/ui/TextInput";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
-import type { Product } from "../types";
+import type { Category, LocalUser, Product } from "../types";
 
 interface DashboardPageProps {
   products: Product[];
+  categories: Category[];
   canManage?: boolean;
+  canManageTickets?: boolean;
+  operatorName?: string;
+  requester?: LocalUser | null;
   onAdd: () => void;
   onEdit: (product: Product) => void;
   onDelete: (product: Product) => void;
   onPrint: (product: Product) => void;
+  onCategoriesChanged: () => Promise<void>;
+  onMessage: (message: string, tone: "success" | "error" | "info") => void;
 }
 
 export function DashboardPage({
   products,
+  categories,
   canManage = true,
+  canManageTickets = true,
+  operatorName,
+  requester,
   onAdd,
   onEdit,
   onDelete,
-  onPrint
+  onPrint,
+  onCategoriesChanged,
+  onMessage
 }: DashboardPageProps) {
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebouncedValue(query);
@@ -86,11 +99,21 @@ export function DashboardPage({
               product={product}
               onEdit={canManage ? onEdit : undefined}
               onDelete={canManage ? onDelete : undefined}
-              onPrint={onPrint}
+              onPrint={canManageTickets ? onPrint : undefined}
             />
           ))}
         </div>
       )}
+
+      {canManage ? (
+        <CategoryManager
+          categories={categories}
+          operatorName={operatorName}
+          requester={requester}
+          onChanged={onCategoriesChanged}
+          onMessage={onMessage}
+        />
+      ) : null}
     </section>
   );
 }
