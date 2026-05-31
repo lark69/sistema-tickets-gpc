@@ -516,9 +516,9 @@ impl Database {
     }
 
     pub fn ensure_tickets_can_be_printed(&self) -> AppResult<()> {
-        if self.get_current_cash_register()?.is_some() {
+        if self.get_current_cash_register()?.is_none() {
             return Err(AppError::InvalidInput(
-                "Feche o caixa antes de imprimir tickets.".to_string(),
+                "Abra o caixa antes de imprimir tickets.".to_string(),
             ));
         }
 
@@ -3177,12 +3177,15 @@ mod tests {
     }
 
     #[test]
-    fn ticket_printing_requires_closed_cash_register() {
+    fn ticket_printing_requires_open_cash_register() {
         let (database, path) = test_database();
 
-        database
+        let error = database
             .ensure_tickets_can_be_printed()
-            .expect("tickets can be printed with no open cash register");
+            .expect_err("closed cash register should block ticket printing");
+
+        assert!(format!("{error}").contains("Abra o caixa"));
+
         database
             .open_cash_register(OpenCashRegisterInput {
                 initial_balance_cents: 0,
@@ -3190,11 +3193,10 @@ mod tests {
             })
             .expect("cash register should open");
 
-        let error = database
+        database
             .ensure_tickets_can_be_printed()
-            .expect_err("open cash register should block ticket printing");
+            .expect("tickets can be printed with an open cash register");
 
-        assert!(format!("{error}").contains("Feche o caixa"));
         let _ = std::fs::remove_file(path);
     }
 
