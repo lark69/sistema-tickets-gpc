@@ -431,7 +431,7 @@ export function App() {
       if (!canViewLogsReports) {
         return restricted("Usuario sem permissao para visualizar relatorios.");
       }
-      return <ReportsPage onMessage={showMessage} />;
+      return <ReportsPage currentUser={currentUser} onMessage={showMessage} />;
     }
 
     if (route === "users" && currentUser) {

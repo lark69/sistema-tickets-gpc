@@ -4,8 +4,11 @@ import type {
   CashMovement,
   CashRegister,
   Category,
+  ExportAppConfigResult,
   FecharVendaCaixaInput,
+  PrintSalesReportResult,
   ReportsPayload,
+  SalesReportPeriod,
   StockMovement,
   TicketData,
   LocalUser,
@@ -157,7 +160,35 @@ export const adminService = {
     return callCommand<ReportsPayload>("get_reports");
   },
 
+  printSalesReport(period: SalesReportPeriod): Promise<PrintSalesReportResult> {
+    return callCommand<PrintSalesReportResult>("print_sales_report", {
+      input: { period }
+    });
+  },
+
+  resetSales(username: string, password: string): Promise<void> {
+    return callCommand<void>("reset_sales", {
+      input: { username, password }
+    });
+  },
+
   backupDatabase(): Promise<BackupResult> {
     return callCommand<BackupResult>("backup_database");
+  },
+
+  exportAppConfig(): Promise<ExportAppConfigResult> {
+    return callCommand<ExportAppConfigResult>("export_app_config");
+  },
+
+  importAppConfig(path: string): Promise<void> {
+    return callCommand<void>("import_app_config", {
+      input: { path }
+    });
+  },
+
+  importAppConfigContent(content: string): Promise<void> {
+    return callCommand<void>("import_app_config_content", {
+      input: { content }
+    });
   }
 };

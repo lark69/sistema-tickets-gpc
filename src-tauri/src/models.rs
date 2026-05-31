@@ -469,10 +469,96 @@ pub struct ReportsPayload {
     pub low_stock_products: Vec<Product>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrintSalesReportInput {
+    pub period: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SalesReportData {
+    pub period: String,
+    pub period_label: String,
+    pub printed_at: i64,
+    pub direct_sales_cents: i64,
+    pub table_sales_cents: i64,
+    pub ticket_sales_cents: i64,
+    pub total_sales_cents: i64,
+    pub estimated_profit_cents: i64,
+    pub previous_total_sales_cents: i64,
+    pub comparison_percent: Option<f64>,
+    pub comparison_text: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrintSalesReportResult {
+    pub printer_name: String,
+    pub period_label: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackupResult {
     pub path: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetSalesInput {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportAppConfigResult {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportAppConfigInput {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportAppConfigContentInput {
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppDataExport {
+    pub version: i64,
+    pub exported_at: i64,
+    pub company_name: String,
+    pub tax_id: String,
+    pub print_width_chars: i64,
+    pub categories: Vec<ExportedCategory>,
+    pub products: Vec<ExportedProduct>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportedCategory {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportedProduct {
+    pub name: String,
+    pub price_cents: i64,
+    pub barcode: Option<String>,
+    pub cost_price_cents: i64,
+    pub unit: String,
+    pub category_name: Option<String>,
+    pub stock: i64,
+    pub reorder_level: i64,
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

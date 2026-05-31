@@ -1,13 +1,15 @@
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    AppConfig, AppConfigInput, AuthPayload, CashMovement, CashMovementInput, CashRegister,
-    Category, CategoryInput, CategoryUpdateInput, CloseCashRegisterInput, CreateMesaInput,
-    CreateUserInput, DeleteCategoryInput, DeleteUserInput, FecharMesaInput, FecharVendaCaixaInput,
-    IssuedTicket, LocalUser, LogEntry, LogFiltros, LoginInput, Mesa, MesaDetailed,
-    MesaProdutoDetalhado, MesaProdutoInput, MesaSessao, OpenCashRegisterInput, Product,
-    ProductInput, ProductUpdateInput, ReportsPayload, SaleCartItemInput, SalesByDay,
-    StockAdjustInput, StockMovement, TicketData, TicketProduto, TopProductReport, UpdateUserInput,
+    AppConfig, AppConfigInput, AppDataExport, AuthPayload, CashMovement, CashMovementInput,
+    CashRegister, Category, CategoryInput, CategoryUpdateInput, CloseCashRegisterInput,
+    CreateMesaInput, CreateUserInput, DeleteCategoryInput, DeleteUserInput, ExportedCategory,
+    ExportedProduct, FecharMesaInput, FecharVendaCaixaInput, IssuedTicket, LocalUser, LogEntry,
+    LogFiltros, LoginInput, Mesa, MesaDetailed, MesaProdutoDetalhado, MesaProdutoInput, MesaSessao,
+    OpenCashRegisterInput, Product, ProductInput, ProductUpdateInput, ReportsPayload,
+    SaleCartItemInput, SalesByDay, SalesReportData, StockAdjustInput, StockMovement, TicketData,
+    TicketProduto, TopProductReport, UpdateUserInput,
 };
+use chrono::{Datelike, Days, Local, NaiveDate, NaiveDateTime, TimeZone};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -108,6 +110,160 @@ impl Database {
 
         self.ensure_default_mesas()?;
         self.get_config()
+    }
+
+    pub fn export_app_data(&self) -> AppResult<AppDataExport> {
+        let config = self.get_config()?;
+        let categories = self
+            .list_categories()?
+            .into_iter()
+            .map(|category| ExportedCategory {
+                name: category.name,
+            })
+            .collect::<Vec<_>>();
+        let products = self
+            .list_products()?
+            .into_iter()
+            .map(|product| ExportedProduct {
+                name: product.name,
+                price_cents: product.price_cents,
+                barcode: product.barcode,
+                cost_price_cents: product.cost_price_cents,
+                unit: product.unit,
+                category_name: product.category_name,
+                stock: product.stock,
+                reorder_level: product.reorder_level,
+                description: product.description,
+            })
+            .collect::<Vec<_>>();
+
+        Ok(AppDataExport {
+            version: 1,
+            exported_at: now_millis(),
+            company_name: config.company_name,
+            tax_id: config.tax_id,
+            print_width_chars: config.print_width_chars,
+            categories,
+            products,
+        })
+    }
+
+    pub fn import_app_data(&self, data: AppDataExport) -> AppResult<()> {
+        let company_name = data.company_name.trim().to_string();
+        let tax_id = data.tax_id.trim().to_string();
+        if company_name.is_empty() {
+            return Err(AppError::InvalidInput(
+                "O arquivo importado nao possui nome da empresa.".to_string(),
+            ));
+        }
+        if tax_id.is_empty() {
+            return Err(AppError::InvalidInput(
+                "O arquivo importado nao possui CPF/CNPJ.".to_string(),
+            ));
+        }
+        if data.print_width_chars < 32 || data.print_width_chars > 64 {
+            return Err(AppError::InvalidInput(
+                "A largura de impressao importada deve ficar entre 32 e 64 caracteres.".to_string(),
+            ));
+        }
+
+        let mut category_names = Vec::new();
+        let mut category_keys = BTreeMap::new();
+        for category in data.categories {
+            let name = category.name.trim().to_string();
+            if name.is_empty() {
+                continue;
+            }
+
+            let key = name.to_lowercase();
+            if !category_keys.contains_key(&key) {
+                category_keys.insert(key, ());
+                category_names.push(name);
+            }
+        }
+
+        let mut normalized_products = Vec::new();
+        for product in data.products {
+            let category_name = product
+                .category_name
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+            if let Some(name) = &category_name {
+                let key = name.to_lowercase();
+                if !category_keys.contains_key(&key) {
+                    category_keys.insert(key, ());
+                    category_names.push(name.clone());
+                }
+            }
+
+            let normalized = validate_product(ProductInput {
+                name: product.name,
+                price_cents: product.price_cents,
+                barcode: product.barcode,
+                cost_price_cents: product.cost_price_cents,
+                unit: product.unit,
+                category_id: None,
+                stock: product.stock,
+                reorder_level: product.reorder_level,
+                description: product.description,
+            })?;
+            normalized_products.push((normalized, category_name));
+        }
+
+        let now = now_millis();
+        let connection = self.connection()?;
+        let transaction = connection.unchecked_transaction()?;
+
+        transaction.execute(
+            "UPDATE app_config
+             SET company_name = ?1, tax_id = ?2, print_width_chars = ?3, updated_at = ?4
+             WHERE id = 1",
+            params![company_name, tax_id, data.print_width_chars, now],
+        )?;
+
+        transaction.execute("DELETE FROM mesa_produtos", [])?;
+        transaction.execute(
+            "UPDATE mesa_sessao SET tempo_fim = ?1 WHERE tempo_fim IS NULL",
+            params![now],
+        )?;
+        transaction.execute("DELETE FROM products", [])?;
+        transaction.execute("DELETE FROM categories", [])?;
+
+        let mut category_ids = BTreeMap::new();
+        for name in category_names {
+            transaction.execute(
+                "INSERT INTO categories (name, created_at) VALUES (?1, ?2)",
+                params![&name, now],
+            )?;
+            category_ids.insert(name.to_lowercase(), transaction.last_insert_rowid());
+        }
+
+        for (product, category_name) in normalized_products {
+            let category_id =
+                category_name.and_then(|name| category_ids.get(&name.to_lowercase()).copied());
+            transaction.execute(
+                "INSERT INTO products (
+                    name, price_cents, barcode, cost_price_cents, unit, category_id,
+                    stock, reorder_level, description, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    product.name,
+                    product.price_cents,
+                    product.barcode,
+                    product.cost_price_cents,
+                    product.unit,
+                    category_id,
+                    product.stock,
+                    product.reorder_level,
+                    product.description,
+                    now,
+                    now
+                ],
+            )?;
+        }
+
+        transaction.commit()?;
+        Ok(())
     }
 
     pub fn list_products(&self) -> AppResult<Vec<Product>> {
@@ -356,6 +512,59 @@ impl Database {
             )?;
         }
 
+        Ok(())
+    }
+
+    pub fn ensure_tickets_can_be_printed(&self) -> AppResult<()> {
+        if self.get_current_cash_register()?.is_some() {
+            return Err(AppError::InvalidInput(
+                "Feche o caixa antes de imprimir tickets.".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    pub fn record_ticket_sale(&self, product: &Product, quantity: i64) -> AppResult<()> {
+        if quantity < 1 {
+            return Err(AppError::InvalidInput(
+                "A quantidade de tickets deve ser maior que zero.".to_string(),
+            ));
+        }
+
+        let now = now_millis();
+        let total_cents = product.price_cents * quantity;
+        let estimated_profit_cents = (product.price_cents - product.cost_price_cents) * quantity;
+        let connection = self.connection()?;
+        let transaction = connection.unchecked_transaction()?;
+
+        transaction.execute(
+            "INSERT INTO sales (
+                mesa_numero, sale_type, operator_name, subtotal_cents, discount_cents,
+                surcharge_cents, total_cents, estimated_profit_cents, payment_method,
+                created_at, nfe_status
+             ) VALUES (NULL, 'ticket', 'ticket', ?1, 0, 0, ?2, ?3, 'ticket', ?4, 'placeholder')",
+            params![total_cents, total_cents, estimated_profit_cents, now],
+        )?;
+        let sale_id = transaction.last_insert_rowid();
+
+        transaction.execute(
+            "INSERT INTO sale_items (
+                sale_id, product_id, product_name, quantity, unit_price_cents,
+                cost_price_cents, subtotal_cents
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                sale_id,
+                product.id,
+                product.name,
+                quantity,
+                product.price_cents,
+                product.cost_price_cents,
+                total_cents
+            ],
+        )?;
+
+        transaction.commit()?;
         Ok(())
     }
 
@@ -1506,6 +1715,21 @@ impl Database {
             .ok_or_else(|| AppError::InvalidInput("Nao existe caixa aberto.".to_string()))?;
         let now = now_millis();
         let connection = self.connection()?;
+        let today = sales_report_period_bounds("day")?;
+        let closed_today = connection.query_row(
+            "SELECT COUNT(*)
+             FROM cash_registers
+             WHERE closed_at >= ?1 AND closed_at < ?2",
+            params![today.current_start, today.current_end],
+            |row| row.get::<_, i64>(0),
+        )?;
+
+        if closed_today > 0 {
+            return Err(AppError::InvalidInput(
+                "Você não pode fechar o caixa duas vezes no mesmo dia.".to_string(),
+            ));
+        }
+
         connection.execute(
             "UPDATE cash_registers
              SET closed_at = ?1, final_counted_cents = ?2
@@ -1632,6 +1856,109 @@ impl Database {
             sales_by_day,
             top_products,
             low_stock_products,
+        })
+    }
+
+    pub fn reset_sales(&self, username: &str, password: &str) -> AppResult<()> {
+        let username = username.trim();
+        if username.is_empty() || password.is_empty() {
+            return Err(AppError::InvalidInput(
+                "Informe usuario e senha do administrador.".to_string(),
+            ));
+        }
+
+        let connection = self.connection()?;
+        let is_admin = connection
+            .query_row(
+                "SELECT 1
+                 FROM users
+                 WHERE username = ?1 AND password_hash = ?2 AND role = 'admin' AND active = 1",
+                params![username, hash_password(password)],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+
+        if !is_admin {
+            return Err(AppError::InvalidInput(
+                "Senha de administrador invalida.".to_string(),
+            ));
+        }
+
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute("DELETE FROM sale_items", [])?;
+        transaction.execute("DELETE FROM sales", [])?;
+        transaction.commit()?;
+
+        let _ = self.insert_log(
+            "vendas_resetadas",
+            None,
+            Some(username.to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        Ok(())
+    }
+
+    pub fn get_sales_report(&self, period: &str) -> AppResult<SalesReportData> {
+        let bounds = sales_report_period_bounds(period)?;
+        let connection = self.connection()?;
+        let (
+            direct_sales_cents,
+            table_sales_cents,
+            ticket_sales_cents,
+            total_sales_cents,
+            estimated_profit_cents,
+        ) = connection.query_row(
+            "SELECT
+                    COALESCE(SUM(CASE WHEN sale_type = 'caixa' THEN total_cents ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN sale_type = 'mesa' THEN total_cents ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN sale_type = 'ticket' THEN total_cents ELSE 0 END), 0),
+                    COALESCE(SUM(total_cents), 0),
+                    COALESCE(SUM(estimated_profit_cents), 0)
+                 FROM sales
+                 WHERE created_at >= ?1 AND created_at < ?2",
+            params![bounds.current_start, bounds.current_end],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
+            },
+        )?;
+        let previous_total_sales_cents = connection.query_row(
+            "SELECT COALESCE(SUM(total_cents), 0)
+             FROM sales
+             WHERE created_at >= ?1 AND created_at < ?2",
+            params![bounds.previous_start, bounds.previous_end],
+            |row| row.get::<_, i64>(0),
+        )?;
+        let (comparison_percent, comparison_text) = comparison_summary(
+            total_sales_cents,
+            previous_total_sales_cents,
+            &bounds.previous_reference_label,
+        );
+
+        Ok(SalesReportData {
+            period: bounds.period,
+            period_label: bounds.period_label,
+            printed_at: now_millis(),
+            direct_sales_cents,
+            table_sales_cents,
+            ticket_sales_cents,
+            total_sales_cents,
+            estimated_profit_cents,
+            previous_total_sales_cents,
+            comparison_percent,
+            comparison_text,
         })
     }
 
@@ -2467,6 +2794,136 @@ fn allowed_permissions() -> &'static [&'static str] {
     ]
 }
 
+struct SalesReportPeriodBounds {
+    period: String,
+    period_label: String,
+    previous_reference_label: String,
+    current_start: i64,
+    current_end: i64,
+    previous_start: i64,
+    previous_end: i64,
+}
+
+fn sales_report_period_bounds(period: &str) -> AppResult<SalesReportPeriodBounds> {
+    let today = Local::now().date_naive();
+    let normalized = period.trim().to_lowercase();
+
+    match normalized.as_str() {
+        "day" | "dia" | "daily" => {
+            let previous_day = today.checked_sub_days(Days::new(1)).ok_or_else(|| {
+                AppError::InvalidInput("Nao foi possivel calcular o dia anterior.".to_string())
+            })?;
+            let next_day = today.checked_add_days(Days::new(1)).ok_or_else(|| {
+                AppError::InvalidInput("Nao foi possivel calcular o proximo dia.".to_string())
+            })?;
+
+            Ok(SalesReportPeriodBounds {
+                period: "day".to_string(),
+                period_label: "Vendas do dia".to_string(),
+                previous_reference_label: "dia anterior".to_string(),
+                current_start: local_start_of_day_millis(today)?,
+                current_end: local_start_of_day_millis(next_day)?,
+                previous_start: local_start_of_day_millis(previous_day)?,
+                previous_end: local_start_of_day_millis(today)?,
+            })
+        }
+        "month" | "mes" | "mensal" | "monthly" => {
+            let first_day = NaiveDate::from_ymd_opt(today.year(), today.month(), 1)
+                .ok_or_else(|| AppError::InvalidInput("Mes invalido.".to_string()))?;
+            let next_month = if today.month() == 12 {
+                NaiveDate::from_ymd_opt(today.year() + 1, 1, 1)
+            } else {
+                NaiveDate::from_ymd_opt(today.year(), today.month() + 1, 1)
+            }
+            .ok_or_else(|| AppError::InvalidInput("Proximo mes invalido.".to_string()))?;
+            let previous_month = if today.month() == 1 {
+                NaiveDate::from_ymd_opt(today.year() - 1, 12, 1)
+            } else {
+                NaiveDate::from_ymd_opt(today.year(), today.month() - 1, 1)
+            }
+            .ok_or_else(|| AppError::InvalidInput("Mes anterior invalido.".to_string()))?;
+
+            Ok(SalesReportPeriodBounds {
+                period: "month".to_string(),
+                period_label: "Vendas do mes".to_string(),
+                previous_reference_label: "mes anterior".to_string(),
+                current_start: local_start_of_day_millis(first_day)?,
+                current_end: local_start_of_day_millis(next_month)?,
+                previous_start: local_start_of_day_millis(previous_month)?,
+                previous_end: local_start_of_day_millis(first_day)?,
+            })
+        }
+        _ => Err(AppError::InvalidInput(
+            "Periodo de relatorio invalido.".to_string(),
+        )),
+    }
+}
+
+fn local_start_of_day_millis(date: NaiveDate) -> AppResult<i64> {
+    let datetime = date
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| AppError::InvalidInput("Data de relatorio invalida.".to_string()))?;
+    local_datetime_millis(datetime)
+}
+
+fn local_datetime_millis(datetime: NaiveDateTime) -> AppResult<i64> {
+    Local
+        .from_local_datetime(&datetime)
+        .earliest()
+        .or_else(|| Local.from_local_datetime(&datetime).latest())
+        .map(|value| value.timestamp_millis())
+        .ok_or_else(|| AppError::InvalidInput("Data local invalida.".to_string()))
+}
+
+fn comparison_summary(current: i64, previous: i64, reference_label: &str) -> (Option<f64>, String) {
+    if previous == 0 {
+        if current == 0 {
+            return (
+                None,
+                format!("Sem vendas no periodo atual e no {reference_label}."),
+            );
+        }
+
+        return (
+            Some(100.0),
+            format!("Aumento de 100% no total de vendas comparado com o {reference_label}."),
+        );
+    }
+
+    let percent = (((current - previous) as f64 / previous as f64) * 100.0 * 10.0).round() / 10.0;
+
+    if percent > 0.0 {
+        (
+            Some(percent),
+            format!(
+                "Aumento de {} no total de vendas comparado com o {reference_label}.",
+                format_percent(percent)
+            ),
+        )
+    } else if percent < 0.0 {
+        (
+            Some(percent),
+            format!(
+                "Queda de {} no total de vendas comparado com o {reference_label}.",
+                format_percent(percent.abs())
+            ),
+        )
+    } else {
+        (
+            Some(0.0),
+            format!("Sem variacao no total de vendas comparado com o {reference_label}."),
+        )
+    }
+}
+
+fn format_percent(value: f64) -> String {
+    if (value.fract()).abs() < 0.05 {
+        format!("{:.0}%", value)
+    } else {
+        format!("{:.1}%", value).replace('.', ",")
+    }
+}
+
 fn validate_payment_method(value: &str) -> AppResult<String> {
     let normalized = value.trim().to_lowercase();
     match normalized.as_str() {
@@ -2596,6 +3053,40 @@ mod tests {
     }
 
     #[test]
+    fn cash_register_cannot_close_twice_on_same_day() {
+        let (database, path) = test_database();
+
+        database
+            .open_cash_register(OpenCashRegisterInput {
+                initial_balance_cents: 1_000,
+                operator_name: "admin".to_string(),
+            })
+            .expect("first cash register should open");
+        database
+            .close_cash_register(CloseCashRegisterInput {
+                final_counted_cents: 1_000,
+                operator_name: "admin".to_string(),
+            })
+            .expect("first cash register should close");
+
+        database
+            .open_cash_register(OpenCashRegisterInput {
+                initial_balance_cents: 2_000,
+                operator_name: "admin".to_string(),
+            })
+            .expect("second cash register should open");
+        let error = database
+            .close_cash_register(CloseCashRegisterInput {
+                final_counted_cents: 2_000,
+                operator_name: "admin".to_string(),
+            })
+            .expect_err("second close on the same day should be blocked");
+
+        assert!(format!("{error}").contains("fechar o caixa duas vezes no mesmo dia"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn sale_decrements_stock_and_updates_reports() {
         let (database, path) = test_database();
         database
@@ -2683,6 +3174,210 @@ mod tests {
 
         assert!(format!("{error}").contains("Abra o caixa"));
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn ticket_printing_requires_closed_cash_register() {
+        let (database, path) = test_database();
+
+        database
+            .ensure_tickets_can_be_printed()
+            .expect("tickets can be printed with no open cash register");
+        database
+            .open_cash_register(OpenCashRegisterInput {
+                initial_balance_cents: 0,
+                operator_name: "admin".to_string(),
+            })
+            .expect("cash register should open");
+
+        let error = database
+            .ensure_tickets_can_be_printed()
+            .expect_err("open cash register should block ticket printing");
+
+        assert!(format!("{error}").contains("Feche o caixa"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn daily_sales_report_splits_sources_and_compares_previous_day() {
+        let (database, path) = test_database();
+        let connection = database.connection().expect("test connection should open");
+        let now = now_millis();
+        let yesterday = now - 86_400_000;
+
+        connection
+            .execute(
+                "INSERT INTO sales (
+                    mesa_numero, sale_type, operator_name, subtotal_cents, discount_cents,
+                    surcharge_cents, total_cents, estimated_profit_cents, payment_method,
+                    created_at, nfe_status
+                 ) VALUES (NULL, 'caixa', 'admin', 10000, 0, 0, 10000, 3000, 'pix', ?1, 'placeholder')",
+                params![now],
+            )
+            .expect("cash sale should insert");
+        connection
+            .execute(
+                "INSERT INTO sales (
+                    mesa_numero, sale_type, operator_name, subtotal_cents, discount_cents,
+                    surcharge_cents, total_cents, estimated_profit_cents, payment_method,
+                    created_at, nfe_status
+                 ) VALUES (1, 'mesa', 'admin', 5000, 0, 0, 5000, 2000, 'dinheiro', ?1, 'placeholder')",
+                params![now],
+            )
+            .expect("table sale should insert");
+        connection
+            .execute(
+                "INSERT INTO sales (
+                    mesa_numero, sale_type, operator_name, subtotal_cents, discount_cents,
+                    surcharge_cents, total_cents, estimated_profit_cents, payment_method,
+                    created_at, nfe_status
+                 ) VALUES (NULL, 'caixa', 'admin', 10000, 0, 0, 10000, 2500, 'pix', ?1, 'placeholder')",
+                params![yesterday],
+            )
+            .expect("previous sale should insert");
+
+        let report = database
+            .get_sales_report("day")
+            .expect("daily report should load");
+
+        assert_eq!(report.direct_sales_cents, 10_000);
+        assert_eq!(report.table_sales_cents, 5_000);
+        assert_eq!(report.total_sales_cents, 15_000);
+        assert_eq!(report.estimated_profit_cents, 5_000);
+        assert_eq!(report.previous_total_sales_cents, 10_000);
+        assert_eq!(report.comparison_percent, Some(50.0));
+        assert!(report.comparison_text.contains("Aumento de 50%"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn generated_tickets_are_counted_as_ticket_sales_in_reports() {
+        let (database, path) = test_database();
+        let product = database
+            .create_product(sample_product("Ticket Almoco", 10))
+            .expect("product should be created");
+
+        database
+            .record_ticket_sale(&product, 3)
+            .expect("ticket sale should be recorded");
+
+        let report = database
+            .get_sales_report("day")
+            .expect("daily report should load");
+
+        assert_eq!(report.ticket_sales_cents, 3_000);
+        assert_eq!(report.total_sales_cents, 3_000);
+        assert_eq!(report.estimated_profit_cents, 1_800);
+        assert!(database
+            .get_reports()
+            .expect("reports should load")
+            .top_products
+            .iter()
+            .any(|item| item.product_name == "Ticket Almoco" && item.quantity == 3));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn reset_sales_requires_current_admin_password() {
+        let (database, path) = test_database();
+        database
+            .create_user(CreateUserInput {
+                username: "admin".to_string(),
+                password: "senha123".to_string(),
+                role: "admin".to_string(),
+                permissions: None,
+                requester_role: None,
+                requester_permissions: None,
+            })
+            .expect("admin should be created");
+        let product = database
+            .create_product(sample_product("Combo", 10))
+            .expect("product should be created");
+        database
+            .record_ticket_sale(&product, 2)
+            .expect("sale should be recorded");
+
+        let error = database
+            .reset_sales("admin", "senha-errada")
+            .expect_err("wrong admin password should be rejected");
+        assert!(format!("{error}").contains("Senha de administrador invalida"));
+
+        database
+            .reset_sales("admin", "senha123")
+            .expect("admin password should reset sales");
+        let reports = database.get_reports().expect("reports should load");
+        assert_eq!(reports.total_revenue_cents, 0);
+        assert_eq!(reports.estimated_profit_cents, 0);
+        assert!(reports.top_products.is_empty());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn app_data_export_and_import_replaces_products_categories_and_basic_config() {
+        let (source, source_path) = test_database();
+        let (target, target_path) = test_database();
+        source
+            .save_config(AppConfigInput {
+                company_name: "GPC Comercio".to_string(),
+                tax_id: "12.345.678/0001-90".to_string(),
+                thank_you_message: Some("Volte sempre".to_string()),
+                validity_days: 30,
+                theme: "light".to_string(),
+                printer_name: None,
+                print_width_chars: 42,
+                setup_completed: true,
+                table_count: 40,
+                backup_time: None,
+            })
+            .expect("source config should be saved");
+        let category = source
+            .create_category(
+                CategoryInput {
+                    name: "Bebidas".to_string(),
+                },
+                Some("admin".to_string()),
+                Some("admin".to_string()),
+                None,
+            )
+            .expect("category should be created");
+        source
+            .create_product(ProductInput {
+                name: "Agua Mineral".to_string(),
+                price_cents: 500,
+                barcode: Some("789000000001".to_string()),
+                cost_price_cents: 200,
+                unit: "UN".to_string(),
+                category_id: Some(category.id),
+                stock: 12,
+                reorder_level: 3,
+                description: Some("Sem gas".to_string()),
+            })
+            .expect("product should be created");
+
+        let exported = source.export_app_data().expect("app data should export");
+        target
+            .import_app_data(exported)
+            .expect("app data should import");
+
+        let imported_config = target.get_config().expect("target config should load");
+        assert_eq!(imported_config.company_name, "GPC Comercio");
+        assert_eq!(imported_config.tax_id, "12.345.678/0001-90");
+        assert_eq!(imported_config.print_width_chars, 42);
+        let categories = target
+            .list_categories()
+            .expect("categories should load after import");
+        assert_eq!(categories.len(), 1);
+        assert_eq!(categories[0].name, "Bebidas");
+        let products = target
+            .list_products()
+            .expect("products should load after import");
+        assert_eq!(products.len(), 1);
+        assert_eq!(products[0].name, "Agua Mineral");
+        assert_eq!(products[0].category_name.as_deref(), Some("Bebidas"));
+        assert_eq!(products[0].stock, 12);
+
+        let _ = std::fs::remove_file(source_path);
+        let _ = std::fs::remove_file(target_path);
     }
 
     #[test]

@@ -1,14 +1,16 @@
 use crate::error::{CommandError, CommandResult};
 use crate::models::{
-    AppConfig, AppConfigInput, AppStatePayload, AuthPayload, BackupResult, CashMovement,
-    CashMovementInput, CashRegister, Category, CategoryInput, CategoryUpdateInput,
+    AppConfig, AppConfigInput, AppDataExport, AppStatePayload, AuthPayload, BackupResult,
+    CashMovement, CashMovementInput, CashRegister, Category, CategoryInput, CategoryUpdateInput,
     CloseCashRegisterInput, CreateMesaInput, CreateUserInput, DeleteCategoryInput,
-    DeleteProductInput, DeleteUserInput, ExportCsvInput, ExportCsvResult, FecharMesaInput,
-    FecharVendaCaixaInput, LocalUser, LogEntry, LogFiltros, LoginInput, Mesa, MesaDetailed,
-    MesaProdutoDetalhado, MesaProdutoInput, MesaSessao, OpenCashRegisterInput, PrintResult,
-    PrintTicketsInput, PrinterInfo, Product, ProductInput, ProductUpdateInput, ReportsPayload,
-    SaveMesaInput, StockAdjustInput, StockMovement, TicketData, UpdateMesaClienteInput,
-    UpdateUserInput, VerifyTicketInput, VerifyTicketResult,
+    DeleteProductInput, DeleteUserInput, ExportAppConfigResult, ExportCsvInput, ExportCsvResult,
+    FecharMesaInput, FecharVendaCaixaInput, ImportAppConfigContentInput, ImportAppConfigInput,
+    LocalUser, LogEntry, LogFiltros, LoginInput, Mesa, MesaDetailed, MesaProdutoDetalhado,
+    MesaProdutoInput, MesaSessao, OpenCashRegisterInput, PrintResult, PrintSalesReportInput,
+    PrintSalesReportResult, PrintTicketsInput, PrinterInfo, Product, ProductInput,
+    ProductUpdateInput, ReportsPayload, ResetSalesInput, SaveMesaInput, StockAdjustInput,
+    StockMovement, TicketData, UpdateMesaClienteInput, UpdateUserInput, VerifyTicketInput,
+    VerifyTicketResult,
 };
 use crate::{printer, AppContext};
 use tauri::{Manager, State};
@@ -150,6 +152,10 @@ pub fn print_tickets(
 ) -> CommandResult<PrintResult> {
     state
         .database
+        .ensure_tickets_can_be_printed()
+        .map_err(CommandError::from)?;
+    state
+        .database
         .cleanup_expired_tickets()
         .map_err(CommandError::from)?;
     let config = state.database.get_config().map_err(CommandError::from)?;
@@ -168,6 +174,10 @@ pub fn print_tickets(
 
     match printer::print_tickets(&config, &product, &issued_tickets) {
         Ok(result) => {
+            state
+                .database
+                .record_ticket_sale(&product, result.printed)
+                .map_err(CommandError::from)?;
             let _ = state.database.log_ticket_gerado(&product, result.printed);
             Ok(result)
         }
@@ -456,6 +466,28 @@ pub fn get_reports(state: State<'_, AppContext>) -> CommandResult<ReportsPayload
 }
 
 #[tauri::command]
+pub fn reset_sales(input: ResetSalesInput, state: State<'_, AppContext>) -> CommandResult<()> {
+    state
+        .database
+        .reset_sales(&input.username, &input.password)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn print_sales_report(
+    input: PrintSalesReportInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<PrintSalesReportResult> {
+    let config = state.database.get_config().map_err(CommandError::from)?;
+    let report = state
+        .database
+        .get_sales_report(&input.period)
+        .map_err(CommandError::from)?;
+
+    printer::print_sales_report(&config, &report).map_err(CommandError::from)
+}
+
+#[tauri::command]
 pub fn backup_database(app: tauri::AppHandle) -> CommandResult<BackupResult> {
     let app_data = app.path().app_data_dir().map_err(|error| {
         CommandError::from(crate::error::AppError::Io(format!(
@@ -483,6 +515,89 @@ pub fn backup_database(app: tauri::AppHandle) -> CommandResult<BackupResult> {
     Ok(BackupResult {
         path: destination.to_string_lossy().to_string(),
     })
+}
+
+#[tauri::command]
+pub fn export_app_config(
+    app: tauri::AppHandle,
+    state: State<'_, AppContext>,
+) -> CommandResult<ExportAppConfigResult> {
+    let data = state
+        .database
+        .export_app_data()
+        .map_err(CommandError::from)?;
+    let json = serde_json::to_string_pretty(&data).map_err(|error| {
+        CommandError::from(crate::error::AppError::System(format!(
+            "Nao foi possivel preparar o arquivo de configuracao: {error}"
+        )))
+    })?;
+    let base_dir = app
+        .path()
+        .download_dir()
+        .or_else(|_| app.path().app_data_dir())
+        .map_err(|error| {
+            CommandError::from(crate::error::AppError::Io(format!(
+                "Nao foi possivel localizar uma pasta para exportar: {error}"
+            )))
+        })?
+        .join("portex-pdv-configs");
+
+    std::fs::create_dir_all(&base_dir).map_err(|error| {
+        CommandError::from(crate::error::AppError::Io(format!(
+            "Nao foi possivel criar a pasta de configuracoes: {error}"
+        )))
+    })?;
+    let path = base_dir.join(format!(
+        "portex-pdv-config-{}.json",
+        chrono_like_timestamp()
+    ));
+    std::fs::write(&path, json).map_err(|error| {
+        CommandError::from(crate::error::AppError::Io(format!(
+            "Nao foi possivel salvar as configuracoes: {error}"
+        )))
+    })?;
+
+    Ok(ExportAppConfigResult {
+        path: path.to_string_lossy().to_string(),
+    })
+}
+
+#[tauri::command]
+pub fn import_app_config(
+    input: ImportAppConfigInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<()> {
+    let path = input.path.trim();
+    if path.is_empty() {
+        return Err(CommandError::from(crate::error::AppError::InvalidInput(
+            "Informe o caminho do arquivo de configuracao.".to_string(),
+        )));
+    }
+
+    let content = std::fs::read_to_string(std::path::PathBuf::from(path)).map_err(|error| {
+        CommandError::from(crate::error::AppError::Io(format!(
+            "Nao foi possivel ler o arquivo de configuracao: {error}"
+        )))
+    })?;
+    let data = parse_app_config_export(&content)?;
+
+    state
+        .database
+        .import_app_data(data)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn import_app_config_content(
+    input: ImportAppConfigContentInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<()> {
+    let data = parse_app_config_export(&input.content)?;
+
+    state
+        .database
+        .import_app_data(data)
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -539,6 +654,14 @@ fn chrono_like_timestamp() -> String {
         .map(|duration| duration.as_secs())
         .unwrap_or_default();
     seconds.to_string()
+}
+
+fn parse_app_config_export(content: &str) -> CommandResult<AppDataExport> {
+    serde_json::from_str::<AppDataExport>(content).map_err(|error| {
+        CommandError::from(crate::error::AppError::InvalidInput(format!(
+            "Arquivo de configuracao invalido: {error}"
+        )))
+    })
 }
 
 #[cfg(target_os = "windows")]

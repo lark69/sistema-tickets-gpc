@@ -70,7 +70,12 @@ pub fn run() {
             commands::add_cash_movement,
             commands::list_cash_movements,
             commands::get_reports,
+            commands::reset_sales,
+            commands::print_sales_report,
             commands::backup_database,
+            commands::export_app_config,
+            commands::import_app_config,
+            commands::import_app_config_content,
             commands::export_csv,
             commands::list_printers,
             commands::open_creator_portfolio

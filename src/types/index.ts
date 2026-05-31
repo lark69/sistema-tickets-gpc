@@ -232,6 +232,10 @@ export interface ExportCsvResult {
   path: string;
 }
 
+export interface ExportAppConfigResult {
+  path: string;
+}
+
 export type UserPermission =
   | "addTableProducts"
   | "removeTableProducts"
@@ -301,6 +305,13 @@ export interface ReportsPayload {
   salesByDay: Array<{ dateLabel: string; totalCents: number }>;
   topProducts: Array<{ productName: string; quantity: number; totalCents: number }>;
   lowStockProducts: Product[];
+}
+
+export type SalesReportPeriod = "day" | "month";
+
+export interface PrintSalesReportResult {
+  printerName: string;
+  periodLabel: string;
 }
 
 export interface BackupResult {

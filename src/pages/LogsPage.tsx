@@ -1,4 +1,4 @@
-import { Download, Filter } from "lucide-react";
+import { Download, Filter, Search } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Button } from "../components/ui/Button";
 import { Select } from "../components/ui/Select";
@@ -18,6 +18,7 @@ export function LogsPage({ onMessage }: LogsPageProps) {
   const [loading, setLoading] = useState(false);
   const [tipo, setTipo] = useState("");
   const [numeroMesa, setNumeroMesa] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
 
   async function loadLogs(filtros?: LogFiltros) {
     setLoading(true);
@@ -38,10 +39,33 @@ export function LogsPage({ onMessage }: LogsPageProps) {
     }).catch(() => undefined);
   }
 
+  const filteredLogs = useMemo(() => {
+    const term = normalizeSearch(searchTerm);
+    if (!term) {
+      return logs;
+    }
+
+    return logs.filter((log) =>
+      normalizeSearch([
+        log.id,
+        log.tipo,
+        log.numeroMesa ? String(log.numeroMesa).padStart(2, "0") : "",
+        log.nomeCliente ?? "",
+        log.valorTotalCents ? formatCurrency(log.valorTotalCents) : "",
+        log.formaPagamento ?? "",
+        log.tempoPermanencia ?? "",
+        log.idMesaUnico ?? "",
+        log.listaProdutosJson ?? "",
+        formatDateFromMillis(log.dataHora),
+        new Date(log.dataHora).toLocaleString("pt-BR")
+      ].join(" ")).includes(term)
+    );
+  }, [logs, searchTerm]);
+
   const csv = useMemo(() => {
     const rows = [
       ["Data/Hora", "Tipo", "Mesa", "Cliente", "Valor", "Pagamento", "Tempo", "ID"],
-      ...logs.map((log) => [
+      ...filteredLogs.map((log) => [
         new Date(log.dataHora).toLocaleString("pt-BR"),
         log.tipo,
         log.numeroMesa ? String(log.numeroMesa).padStart(2, "0") : "",
@@ -53,7 +77,7 @@ export function LogsPage({ onMessage }: LogsPageProps) {
       ])
     ];
     return rows.map((row) => row.map((cell) => `"${cell.replace(/"/g, '""')}"`).join(";")).join("\n");
-  }, [logs]);
+  }, [filteredLogs]);
 
   function exportCsv() {
     mesaService
@@ -103,6 +127,13 @@ export function LogsPage({ onMessage }: LogsPageProps) {
           onChange={(event) => setNumeroMesa(event.target.value)}
           placeholder="01"
         />
+        <TextInput
+          label="Busca geral"
+          icon={<Search size={18} />}
+          value={searchTerm}
+          onChange={(event) => setSearchTerm(event.target.value)}
+          placeholder="ID, nome, data, usuario, ticket, mesa, caixa..."
+        />
         <Button type="submit" icon={<Filter size={18} />} loading={loading}>
           Filtrar
         </Button>
@@ -114,7 +145,7 @@ export function LogsPage({ onMessage }: LogsPageProps) {
           <span>Tipo</span>
           <span>Detalhes</span>
         </div>
-        {logs.map((log) => (
+        {filteredLogs.map((log) => (
           <div key={log.id} className="logs-row">
             <span>{formatDateFromMillis(log.dataHora)} {new Date(log.dataHora).toLocaleTimeString("pt-BR")}</span>
             <span>{log.tipo.replace("_", " ")}</span>
@@ -127,8 +158,16 @@ export function LogsPage({ onMessage }: LogsPageProps) {
             </span>
           </div>
         ))}
-        {logs.length === 0 ? <div className="logs-empty">Nenhum log encontrado.</div> : null}
+        {filteredLogs.length === 0 ? <div className="logs-empty">Nenhum log encontrado.</div> : null}
       </div>
     </section>
   );
+}
+
+function normalizeSearch(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
 }

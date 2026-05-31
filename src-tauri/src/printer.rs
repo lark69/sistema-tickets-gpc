@@ -1,5 +1,8 @@
 use crate::error::{AppError, AppResult};
-use crate::models::{AppConfig, IssuedTicket, PrintResult, PrinterInfo, Product, TicketData};
+use crate::models::{
+    AppConfig, IssuedTicket, PrintResult, PrintSalesReportResult, PrinterInfo, Product,
+    SalesReportData, TicketData,
+};
 use chrono::{Duration, Local};
 use serde::Deserialize;
 
@@ -17,19 +20,7 @@ pub fn print_tickets(
         ));
     }
 
-    let printer_name = match config
-        .printer_name
-        .as_ref()
-        .filter(|value| !value.is_empty())
-    {
-        Some(name) => name.clone(),
-        None => default_printer_name()?.ok_or_else(|| {
-            AppError::Printer(
-                "Nenhuma impressora configurada. Selecione uma impressora nas configuracoes."
-                    .to_string(),
-            )
-        })?,
-    };
+    let printer_name = configured_printer_name(config)?;
 
     let mut payload = Vec::new();
     for ticket in issued_tickets {
@@ -53,21 +44,39 @@ pub fn list_printers() -> AppResult<Vec<PrinterInfo>> {
 }
 
 pub fn print_pdv_ticket(config: &AppConfig, ticket: &TicketData) -> AppResult<()> {
-    let printer_name = match config
+    let printer_name = configured_printer_name(config)?;
+    let payload = build_pdv_ticket_payload(config, ticket);
+    send_raw_to_printer(&printer_name, &payload)
+}
+
+pub fn print_sales_report(
+    config: &AppConfig,
+    report: &SalesReportData,
+) -> AppResult<PrintSalesReportResult> {
+    let printer_name = configured_printer_name(config)?;
+    let payload = build_sales_report_payload(config, report);
+    send_raw_to_printer(&printer_name, &payload)?;
+
+    Ok(PrintSalesReportResult {
+        printer_name,
+        period_label: report.period_label.clone(),
+    })
+}
+
+fn configured_printer_name(config: &AppConfig) -> AppResult<String> {
+    match config
         .printer_name
         .as_ref()
         .filter(|value| !value.is_empty())
     {
-        Some(name) => name.clone(),
+        Some(name) => Ok(name.clone()),
         None => default_printer_name()?.ok_or_else(|| {
             AppError::Printer(
                 "Nenhuma impressora configurada. Selecione uma impressora nas configuracoes."
                     .to_string(),
             )
-        })?,
-    };
-    let payload = build_pdv_ticket_payload(config, ticket);
-    send_raw_to_printer(&printer_name, &payload)
+        }),
+    }
 }
 
 fn build_ticket_payload(config: &AppConfig, product: &Product, ticket: &IssuedTicket) -> Vec<u8> {
@@ -81,6 +90,7 @@ fn build_ticket_payload(config: &AppConfig, product: &Product, ticket: &IssuedTi
     push_line(&mut bytes, &config.company_name);
     bytes.extend([ESC, b'E', 0]);
     push_line(&mut bytes, &config.tax_id);
+    push_line(&mut bytes, "Portex PDV");
     push_line(&mut bytes, "");
 
     bytes.extend([ESC, b'a', 0]);
@@ -115,6 +125,7 @@ fn build_pdv_ticket_payload(config: &AppConfig, ticket: &TicketData) -> Vec<u8> 
     push_line(&mut bytes, &config.company_name);
     bytes.extend([ESC, b'E', 0]);
     push_line(&mut bytes, &config.tax_id);
+    push_line(&mut bytes, "Portex PDV");
     push_line(&mut bytes, "");
     if ticket.numero_mesa > 0 {
         push_line(&mut bytes, &format!("Mesa {:02}", ticket.numero_mesa));
@@ -193,6 +204,82 @@ fn build_pdv_ticket_payload(config: &AppConfig, ticket: &TicketData) -> Vec<u8> 
     bytes
 }
 
+fn build_sales_report_payload(config: &AppConfig, report: &SalesReportData) -> Vec<u8> {
+    let width = config.print_width_chars.clamp(32, 64) as usize;
+    let mut bytes = Vec::new();
+
+    bytes.extend([ESC, b'@']);
+    bytes.extend([ESC, b'a', 1]);
+    bytes.extend([ESC, b'E', 1]);
+    push_line(&mut bytes, &config.company_name);
+    bytes.extend([ESC, b'E', 0]);
+    push_line(&mut bytes, &config.tax_id);
+    push_line(&mut bytes, "Portex PDV");
+    push_line(
+        &mut bytes,
+        &format!("Data: {}", timestamp_to_datetime_label(report.printed_at)),
+    );
+    push_line(&mut bytes, "");
+    bytes.extend([ESC, b'E', 1]);
+    push_line(&mut bytes, "RELATORIO DE VENDAS");
+    bytes.extend([ESC, b'E', 0]);
+    push_line(&mut bytes, &report.period_label);
+    push_line(&mut bytes, "");
+
+    bytes.extend([ESC, b'a', 0]);
+    push_line(&mut bytes, &"-".repeat(width));
+    push_wrapped_line(
+        &mut bytes,
+        &format!(
+            "Caixa/Venda direta: {}",
+            format_currency(report.direct_sales_cents)
+        ),
+        width,
+    );
+    push_wrapped_line(
+        &mut bytes,
+        &format!(
+            "Vendas por mesa: {}",
+            format_currency(report.table_sales_cents)
+        ),
+        width,
+    );
+    push_wrapped_line(
+        &mut bytes,
+        &format!(
+            "Vendas por tickets: {}",
+            format_currency(report.ticket_sales_cents)
+        ),
+        width,
+    );
+    push_line(&mut bytes, &"-".repeat(width));
+    bytes.extend([ESC, b'E', 1]);
+    push_wrapped_line(
+        &mut bytes,
+        &format!(
+            "Total de vendas: {}",
+            format_currency(report.total_sales_cents)
+        ),
+        width,
+    );
+    push_wrapped_line(
+        &mut bytes,
+        &format!(
+            "Lucro estimado: {}",
+            format_currency(report.estimated_profit_cents)
+        ),
+        width,
+    );
+    bytes.extend([ESC, b'E', 0]);
+    push_line(&mut bytes, &"-".repeat(width));
+    push_wrapped_line(&mut bytes, &report.comparison_text, width);
+
+    push_line(&mut bytes, "");
+    push_line(&mut bytes, "");
+    bytes.extend([GS, b'V', 66, 0]);
+    bytes
+}
+
 fn payment_label(value: &str) -> &'static str {
     match value {
         "pix" => "PIX",
@@ -200,6 +287,17 @@ fn payment_label(value: &str) -> &'static str {
         "debito" => "Debito",
         "credito" => "Credito",
         _ => "Pagamento",
+    }
+}
+
+fn timestamp_to_datetime_label(timestamp_millis: i64) -> String {
+    let seconds = timestamp_millis.div_euclid(1000);
+    match chrono::DateTime::<chrono::Utc>::from_timestamp(seconds, 0) {
+        Some(date_time) => date_time
+            .with_timezone(&Local)
+            .format("%d/%m/%Y %H:%M")
+            .to_string(),
+        None => Local::now().format("%d/%m/%Y %H:%M").to_string(),
     }
 }
 
@@ -432,4 +530,98 @@ fn send_raw_to_printer(_printer_name: &str, _payload: &[u8]) -> AppResult<()> {
 #[cfg(target_os = "windows")]
 fn to_wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{SalesReportData, TicketProduto};
+
+    fn config() -> AppConfig {
+        AppConfig {
+            company_name: "Empresa Teste".to_string(),
+            tax_id: "00.000.000/0001-00".to_string(),
+            thank_you_message: Some("Obrigado".to_string()),
+            validity_days: 30,
+            theme: "light".to_string(),
+            printer_name: Some("Teste".to_string()),
+            print_width_chars: 48,
+            onboarding_completed: true,
+            setup_completed: true,
+            table_count: 40,
+            backup_time: None,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn all_payloads_include_portex_pdv_brand() {
+        let config = config();
+        let product = Product {
+            id: 1,
+            name: "Produto".to_string(),
+            price_cents: 1_500,
+            barcode: None,
+            cost_price_cents: 500,
+            unit: "UN".to_string(),
+            category_id: None,
+            category_name: None,
+            stock: 10,
+            reorder_level: 2,
+            sold_quantity: 0,
+            description: None,
+            created_at: 0,
+            updated_at: 0,
+        };
+        let issued_ticket = IssuedTicket {
+            ticket_id: "A1B2C3".to_string(),
+            expires_at: 1_900_000_000_000,
+        };
+        let pdv_ticket = TicketData {
+            numero_mesa: 1,
+            nome_cliente: None,
+            tempo_permanencia: "00:10:00".to_string(),
+            id_unico: "Z9Y8X7".to_string(),
+            forma_pagamento: "pix".to_string(),
+            subtotal_cents: 1_500,
+            acrescimo_cents: 0,
+            total_cents: 1_500,
+            valor_pago_cents: None,
+            troco_cents: None,
+            produtos: vec![TicketProduto {
+                nome: "Produto".to_string(),
+                quantidade: 1,
+                preco_unit_cents: 1_500,
+                subtotal_cents: 1_500,
+            }],
+        };
+        let report = SalesReportData {
+            period: "day".to_string(),
+            period_label: "Vendas do dia".to_string(),
+            printed_at: 1_900_000_000_000,
+            direct_sales_cents: 1_000,
+            table_sales_cents: 2_000,
+            ticket_sales_cents: 900,
+            total_sales_cents: 3_000,
+            estimated_profit_cents: 1_200,
+            previous_total_sales_cents: 2_000,
+            comparison_percent: Some(50.0),
+            comparison_text: "Aumento de 50% no total de vendas comparado com o dia anterior."
+                .to_string(),
+        };
+
+        let ticket_payload =
+            String::from_utf8_lossy(&build_ticket_payload(&config, &product, &issued_ticket))
+                .to_string();
+        let pdv_payload =
+            String::from_utf8_lossy(&build_pdv_ticket_payload(&config, &pdv_ticket)).to_string();
+        let report_payload =
+            String::from_utf8_lossy(&build_sales_report_payload(&config, &report)).to_string();
+
+        assert!(ticket_payload.contains("Portex PDV"));
+        assert!(pdv_payload.contains("Portex PDV"));
+        assert!(report_payload.contains("Portex PDV"));
+        assert!(report_payload.contains("RELATORIO DE VENDAS"));
+        assert!(report_payload.contains("Vendas por tickets: R$ 9,00"));
+    }
 }
