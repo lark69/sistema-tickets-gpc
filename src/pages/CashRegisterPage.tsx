@@ -4,7 +4,15 @@ import { CashierCheckout, type CashierCartItem } from "../components/cashier/Cas
 import { Button } from "../components/ui/Button";
 import { TextInput } from "../components/ui/TextInput";
 import { adminService } from "../services/adminService";
-import type { CashMovement, CashRegister, FormaPagamento, LocalUser, Product } from "../types";
+import { cashierService } from "../services/cashierService";
+import type {
+  CashierStatus,
+  CashMovement,
+  FormaPagamento,
+  LocalUser,
+  Product,
+  TurnoOperacional
+} from "../types";
 import { centsToInput, currencyToCents, formatCurrency } from "../utils/currency";
 import { getErrorMessage } from "../utils/errors";
 
@@ -15,6 +23,7 @@ interface CashRegisterPageProps {
   canManageCashMovements: boolean;
   onProductsChanged: () => Promise<void>;
   onMessage: (message: string, tone: "success" | "error" | "info") => void;
+  onNavigateFechamento?: () => void;
 }
 
 export function CashRegisterPage({
@@ -23,18 +32,20 @@ export function CashRegisterPage({
   canManageCash,
   canManageCashMovements,
   onProductsChanged,
-  onMessage
+  onMessage,
+  onNavigateFechamento
 }: CashRegisterPageProps) {
-  const [register, setRegister] = useState<CashRegister | null>(null);
+  const [status, setStatus] = useState<CashierStatus | null>(null);
   const [movements, setMovements] = useState<CashMovement[]>([]);
   const [query, setQuery] = useState("");
   const [cart, setCart] = useState<CashierCartItem[]>([]);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [closingSale, setClosingSale] = useState(false);
-  const [initialBalance, setInitialBalance] = useState("0,00");
-  const [finalCounted, setFinalCounted] = useState("");
   const [movementValue, setMovementValue] = useState("");
   const [note, setNote] = useState("");
+
+  const turno: TurnoOperacional | null = status?.turnoAtivo ?? null;
+  const esperadoCents = status?.esperadoAtualCents ?? turno?.saldoInicialCents ?? 0;
 
   const rankedProducts = useMemo(() => {
     return [...products]
@@ -75,7 +86,7 @@ export function CashRegisterPage({
   const cartTotal = cart.reduce((sum, item) => sum + item.product.priceCents * item.quantidade, 0);
 
   async function load() {
-    setRegister(await adminService.getCurrentCashRegister());
+    setStatus(await cashierService.getStatus());
     setMovements(await adminService.listCashMovements());
   }
 
@@ -109,46 +120,6 @@ export function CashRegisterPage({
     return cart.find((item) => item.product.id === productId)?.quantidade ?? 0;
   }
 
-  async function openCash() {
-    if (!canManageCash) {
-      onMessage("Usuario sem permissao para abrir caixa.", "error");
-      return;
-    }
-
-    try {
-      await adminService.openCashRegister(currencyToCents(initialBalance), currentUser.username);
-      await load();
-      onMessage("Caixa aberto com sucesso.", "success");
-    } catch (err) {
-      onMessage(getErrorMessage(err), "error");
-    }
-  }
-
-  async function closeCash() {
-    if (!canManageCash) {
-      onMessage("Usuario sem permissao para fechar caixa.", "error");
-      return;
-    }
-
-    const firstConfirmation = window.confirm("Deseja fechar o caixa agora?");
-    if (!firstConfirmation) {
-      return;
-    }
-
-    const secondConfirmation = window.confirm("Confirme novamente: fechar o caixa encerra esta sessao e registra a diferenca.");
-    if (!secondConfirmation) {
-      return;
-    }
-
-    try {
-      const closed = await adminService.closeCashRegister(currencyToCents(finalCounted), currentUser.username);
-      await load();
-      onMessage(`Caixa fechado. Diferença: ${formatCurrency(closed.differenceCents ?? 0)}`, "info");
-    } catch (err) {
-      onMessage(getErrorMessage(err), "error");
-    }
-  }
-
   async function movement(type: "sangria" | "suprimento") {
     if (!canManageCashMovements) {
       onMessage("Usuario sem permissao para registrar sangria ou suprimento.", "error");
@@ -172,8 +143,8 @@ export function CashRegisterPage({
   }
 
   async function finishSale(formaPagamento: FormaPagamento, valorPagoCents?: number | null) {
-    if (!register) {
-      onMessage("Abra o caixa antes de finalizar uma venda.", "error");
+    if (!turno) {
+      onMessage("Abra um turno na area de Fechamento antes de vender.", "error");
       return;
     }
     if (!canManageCash) {
@@ -218,7 +189,7 @@ export function CashRegisterPage({
         </div>
         <div className="cash-register-pill">
           <Wallet size={18} />
-          {register ? `Caixa aberto · ${formatCurrency(register.expectedBalanceCents)}` : "Caixa fechado"}
+          {turno ? `Turno aberto · ${formatCurrency(esperadoCents)}` : "Sem turno aberto"}
         </div>
       </div>
 
@@ -292,21 +263,36 @@ export function CashRegisterPage({
           <div className="checkout-total">TOTAL: {formatCurrency(cartTotal)}</div>
           <Button
             icon={<ShoppingCart size={18} />}
-            disabled={cart.length === 0 || !register || !canManageCash}
+            disabled={cart.length === 0 || !turno || !canManageCash}
             onClick={() => setCheckoutOpen(true)}
           >
             Finalizar venda
           </Button>
-          {!register ? <p className="danger-text">Abra o caixa antes de vender.</p> : null}
-          {register && !canManageCash ? <p className="danger-text">Usuario sem permissao para finalizar venda direta.</p> : null}
+          {!turno ? (
+            <p className="danger-text">
+              Nenhum turno aberto.{" "}
+              {onNavigateFechamento ? (
+                <button type="button" className="link-button" onClick={onNavigateFechamento}>
+                  Abrir turno em Fechamento
+                </button>
+              ) : (
+                "Abra um turno na area de Fechamento."
+              )}
+            </p>
+          ) : null}
+          {turno && !canManageCash ? <p className="danger-text">Usuario sem permissao para finalizar venda direta.</p> : null}
         </aside>
       </div>
 
       <section className="settings-section">
-        {register ? (
+        {turno ? (
           <>
-            <h2>Controle de caixa</h2>
-            <p>Saldo inicial: {formatCurrency(register.initialBalanceCents)}</p>
+            <h2>Movimentos do turno</h2>
+            <p>
+              Operador: <strong>{turno.operador}</strong> · Fundo de troco:{" "}
+              <strong>{formatCurrency(turno.saldoInicialCents)}</strong> · Esperado na gaveta:{" "}
+              <strong>{formatCurrency(esperadoCents)}</strong>
+            </p>
             <div className="form-grid">
               <TextInput label="Valor do movimento" value={movementValue} onChange={(e) => setMovementValue(e.target.value)} />
               <TextInput label="Observação" value={note} onChange={(e) => setNote(e.target.value)} />
@@ -315,14 +301,21 @@ export function CashRegisterPage({
               <Button type="button" variant="secondary" disabled={!canManageCashMovements} onClick={() => movement("sangria")}>Sangria</Button>
               <Button type="button" disabled={!canManageCashMovements} onClick={() => movement("suprimento")}>Suprimento</Button>
             </div>
-            <TextInput label="Valor contado no fechamento" value={finalCounted} onChange={(e) => setFinalCounted(e.target.value)} placeholder={centsToInput(register.expectedBalanceCents)} />
-            <Button type="button" variant="danger" disabled={!canManageCash} onClick={closeCash}>Fechar caixa</Button>
+            <p className="muted-text">
+              A abertura e o fechamento do turno (contagem da gaveta) sao feitos na area de Fechamento.
+            </p>
           </>
         ) : (
           <>
-            <h2>Abrir caixa</h2>
-            <TextInput label="Saldo inicial" value={initialBalance} onChange={(e) => setInitialBalance(e.target.value)} />
-            <Button type="button" disabled={!canManageCash} onClick={openCash}>Abrir caixa</Button>
+            <h2>Sem turno aberto</h2>
+            <p className="muted-text">
+              Para vender, registrar sangrias ou suprimentos, abra um turno na area de Fechamento.
+            </p>
+            {onNavigateFechamento ? (
+              <div className="form-actions">
+                <Button type="button" onClick={onNavigateFechamento}>Ir para Fechamento</Button>
+              </div>
+            ) : null}
           </>
         )}
       </section>

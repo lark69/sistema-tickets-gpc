@@ -85,6 +85,7 @@ fn build_ticket_payload(config: &AppConfig, product: &Product, ticket: &IssuedTi
 
     let mut bytes = Vec::new();
     bytes.extend([ESC, b'@']);
+    bytes.extend([ESC, b't', 16]);
     bytes.extend([ESC, b'a', 1]);
     bytes.extend([ESC, b'E', 1]);
     push_line(&mut bytes, &config.company_name);
@@ -120,6 +121,7 @@ fn build_pdv_ticket_payload(config: &AppConfig, ticket: &TicketData) -> Vec<u8> 
     let mut bytes = Vec::new();
 
     bytes.extend([ESC, b'@']);
+    bytes.extend([ESC, b't', 16]);
     bytes.extend([ESC, b'a', 1]);
     bytes.extend([ESC, b'E', 1]);
     push_line(&mut bytes, &config.company_name);
@@ -209,6 +211,7 @@ fn build_sales_report_payload(config: &AppConfig, report: &SalesReportData) -> V
     let mut bytes = Vec::new();
 
     bytes.extend([ESC, b'@']);
+    bytes.extend([ESC, b't', 16]);
     bytes.extend([ESC, b'a', 1]);
     bytes.extend([ESC, b'E', 1]);
     push_line(&mut bytes, &config.company_name);
@@ -341,8 +344,9 @@ fn push_wrapped_line(bytes: &mut Vec<u8>, value: &str, width: usize) {
 }
 
 fn push_line(bytes: &mut Vec<u8>, value: &str) {
-    // A Elgin i8 aceita ESC/POS em modo RAW; caracteres fora de ASCII dependem da pagina de codigo da impressora.
-    bytes.extend(value.as_bytes());
+    // UTF-8 -> WPC1252 (combinado com `ESC t 16` no init). Resolve o mojibake nos acentos.
+    let (encoded, _, _) = encoding_rs::WINDOWS_1252.encode(value);
+    bytes.extend_from_slice(&encoded);
     bytes.push(b'\n');
 }
 
@@ -572,6 +576,7 @@ mod tests {
             description: None,
             created_at: 0,
             updated_at: 0,
+            validade: None,
         };
         let issued_ticket = IssuedTicket {
             ticket_id: "A1B2C3".to_string(),

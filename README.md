@@ -7,8 +7,13 @@ O sistema foi criado com foco em desempenho, organização, segurança local e f
 ## Funcionalidades
 
 - Login local com perfis Admin e Operador/Caixa
-- Abertura e fechamento de caixa
-- Registro de sangria e suprimento
+- Caixa unificado por **turno operacional**: o turno é a fonte única da gaveta
+- Abertura de turno com **fundo de troco** e fechamento com contagem da gaveta
+- Fechamento em cascata: **Turno → Período Contábil** (consolidar e bloquear o dia)
+- Dia fiscal deslocado configurável (ex.: bar que vira a madrugada fecha às 06:00)
+- Registro de sangria e suprimento vinculados ao turno
+- Pagamento parcial de mesa, com o dinheiro atribuído ao turno em que foi recebido
+- Guia rápido em tela explicando todo o ciclo do caixa para o usuário final
 - Cadastro de produtos
 - Edição de produtos
 - Exclusão de produtos
@@ -65,6 +70,41 @@ Este ticket é inválido, ou passou da válidade.
 
 Tickets vencidos são removidos automaticamente quando o aplicativo inicia, quando novos tickets são impressos ou quando uma verificação é feita.
 
+## Fechamento de Caixa em Cascata (Turno → Período)
+
+O controle de caixa gira em torno do **turno operacional**, que é a fonte única
+da gaveta de dinheiro. O fluxo do dia é:
+
+```text
+Turno aberto  →  Turno fechado  →  Período consolidado  →  Período bloqueado
+ (vendendo)      (gaveta contada)    (dia somado)            (selado p/ auditoria)
+```
+
+1. **Abrir o turno** (em **Fechamento**): informe o fundo de troco. Sem turno
+   aberto o caixa bloqueia vendas, adição de produtos na mesa e impressão de tickets.
+2. **Vender**: na tela **Caixa** (venda direta) e em **Mesas** (comandas).
+3. **Sangria/Suprimento**: tirar ou colocar dinheiro na gaveta.
+4. **Fechar o turno**: conte o dinheiro físico; o sistema compara com o esperado.
+5. **Consolidar o período**: com todos os turnos do dia fechados, fecha o dia.
+6. **Bloquear o período** (Admin): sela o dia; nenhuma venda daquele dia pode mais
+   ser alterada.
+
+O **esperado na gaveta** de cada turno é calculado assim:
+
+```text
+Fundo de troco + Vendas em dinheiro + Suprimentos − Sangrias
+```
+
+Cartão e PIX **não** entram na gaveta de dinheiro. O total do período reflete a
+conferência da **gaveta (dinheiro)**, não o faturamento — a receita total
+(incluindo cartão/PIX) fica em **Relatórios**.
+
+**Dinheiro de mesa entre turnos:** o dinheiro de uma comanda entra na gaveta no
+**instante do pagamento**, não no fechamento da conta. Cada pagamento carimba o
+turno ativo (`sale_payments.turno_operacional_id`), de modo que um pagamento
+parcial recebido em um turno e a quitação em outro são atribuídos corretamente a
+cada operador — sem sobras nem faltas "fantasma" na virada de turno.
+
 ## Tecnologias Utilizadas
 
 - **Tauri**: empacotamento desktop nativo e leve para Windows
@@ -96,10 +136,20 @@ src-tauri/
   src/
     commands.rs    Comandos expostos ao frontend
     database.rs    SQLite, migrações e regras de persistência
+    payments.rs    Pagamento de mesa, razão sale_payments e fechamento atômico
     error.rs       Tratamento de erros
     lib.rs         Inicialização do Tauri
     models.rs      Modelos do backend
     printer.rs     Impressão térmica ESC/POS
+```
+
+Telas principais relacionadas ao caixa:
+
+```text
+src/pages/CashRegisterPage.tsx   Caixa (somente venda direta + sangria/suprimento)
+src/pages/FecharCaixa.tsx        Abrir/fechar turno, consolidar e bloquear período
+src/pages/GuiaCaixaPage.tsx      Guia rápido em tela do ciclo do caixa
+src/services/cashierService.ts   Comunicação do fluxo de turno/período
 ```
 
 ## Instalação Para Desenvolvimento
@@ -238,10 +288,14 @@ O aplicativo cria automaticamente um banco SQLite local com as tabelas:
 - `mesa_produtos`: produtos adicionados em cada mesa
 - `mesa_sessao`: sessão ativa/fechada da mesa, cliente, pagamento e ID único
 - `logs`: auditoria de tickets, mesas fechadas e produtos criados
-- `cash_registers`: sessões de caixa
-- `cash_movements`: sangrias e suprimentos
+- `cash_registers`: sessões de caixa (histórico legado, mantido para auditoria)
+- `cash_movements`: sangrias e suprimentos (vinculados ao turno)
 - `stock_movements`: histórico de ajustes de estoque
 - `sales` e `sale_items`: vendas e itens vendidos
+- `sale_payments`: razão de pagamentos de mesa (carimbado com o turno do pagamento)
+- `turnos_operacionais`: turnos de caixa, fundo de troco, esperado e diferença
+- `periodos_contabeis`: consolidação diária (período contábil) e bloqueio
+- `sale_audit`: auditoria de edições de venda
 - `users`: usuários locais e perfis
 
 ## Autor

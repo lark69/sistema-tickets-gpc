@@ -42,7 +42,8 @@ export function ProductForm({
       stock: product ? String(product.stock) : "0",
       reorderLevel: product ? String(product.reorderLevel) : "0",
       price: product ? centsToInput(product.priceCents) : "",
-      description: product?.description ?? ""
+      description: product?.description ?? "",
+      validade: product?.validade ? new Date(product.validade).toISOString().slice(0, 10) : ""
     }),
     [product]
   );
@@ -76,7 +77,8 @@ export function ProductForm({
       categoryId: form.categoryId ? Number.parseInt(form.categoryId, 10) : null,
       stock: Number.parseInt(form.stock, 10) || 0,
       reorderLevel: Number.parseInt(form.reorderLevel, 10) || 0,
-      description: form.description || null
+      description: form.description || null,
+      validade: form.validade ? new Date(`${form.validade}T00:00:00`).getTime() : null
     });
   }
 
@@ -235,6 +237,13 @@ export function ProductForm({
         placeholder="Detalhe curto para identificar o produto"
         multiline
         rows={4}
+      />
+
+      <TextInput
+        label="Validade (opcional)"
+        type="date"
+        value={form.validade}
+        onChange={(event) => setForm((current) => ({ ...current, validade: event.target.value }))}
       />
 
       {error ? <div className="inline-alert">{error}</div> : null}

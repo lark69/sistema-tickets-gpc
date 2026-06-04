@@ -1,9 +1,13 @@
-import type { Product, ProductInput, ProductUpdateInput } from "../types";
+import type { Product, ProductInput, ProductUpdateInput, ProdutoVencendo } from "../types";
 import { callCommand } from "./tauri";
 
 export const productService = {
   list(): Promise<Product[]> {
     return callCommand<Product[]>("list_products");
+  },
+
+  produtosVencendo(dias = 7): Promise<ProdutoVencendo[]> {
+    return callCommand<ProdutoVencendo[]>("get_produtos_vencendo", { dias });
   },
 
   create(input: ProductInput): Promise<Product> {

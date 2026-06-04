@@ -27,7 +27,8 @@ interface MesaModalProps {
     items: DraftItem[],
     nomeCliente: string,
     formaPagamento: FormaPagamento,
-    valorPagoCents?: number | null
+    valorPagoCents: number,
+    aplicarAcrescimo: boolean
   ) => Promise<void>;
 }
 
@@ -140,7 +141,7 @@ export function MesaModal({
           <section className="mesa-column">
             <h3>Produtos adicionados</h3>
             {!cashOpen ? (
-              <div className="inline-alert">Caixa fechado. Abra o caixa para adicionar produtos ou fechar a mesa.</div>
+              <div className="inline-alert">Nenhum turno aberto. Abra um turno em Fechamento para adicionar produtos ou fechar a mesa.</div>
             ) : null}
             {cashOpen && !canAddProducts ? (
               <div className="inline-alert">Usuario sem permissao para adicionar produtos a mesa.</div>
@@ -213,8 +214,8 @@ export function MesaModal({
           details={checkoutDetails}
           closing={closing}
           onClose={() => setCheckoutOpen(false)}
-          onConfirm={(formaPagamento, valorPagoCents) =>
-            onCheckout(items, nomeCliente, formaPagamento, valorPagoCents)
+          onConfirm={(formaPagamento, valorPagoCents, aplicarAcrescimo) =>
+            onCheckout(items, nomeCliente, formaPagamento, valorPagoCents, aplicarAcrescimo)
           }
         />
       ) : null}

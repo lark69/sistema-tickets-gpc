@@ -1,15 +1,18 @@
 use crate::error::{CommandError, CommandResult};
 use crate::models::{
-    AppConfig, AppConfigInput, AppDataExport, AppStatePayload, AuthPayload, BackupResult,
-    CashMovement, CashMovementInput, CashRegister, Category, CategoryInput, CategoryUpdateInput,
-    CloseCashRegisterInput, CreateMesaInput, CreateUserInput, DeleteCategoryInput,
-    DeleteProductInput, DeleteUserInput, ExportAppConfigResult, ExportCsvInput, ExportCsvResult,
-    FecharMesaInput, FecharVendaCaixaInput, ImportAppConfigContentInput, ImportAppConfigInput,
-    LocalUser, LogEntry, LogFiltros, LoginInput, Mesa, MesaDetailed, MesaProdutoDetalhado,
-    MesaProdutoInput, MesaSessao, OpenCashRegisterInput, PrintResult, PrintSalesReportInput,
-    PrintSalesReportResult, PrintTicketsInput, PrinterInfo, Product, ProductInput,
-    ProductUpdateInput, ReportsPayload, ResetSalesInput, SaveMesaInput, StockAdjustInput,
-    StockMovement, TicketData, UpdateMesaClienteInput, UpdateUserInput, VerifyTicketInput,
+    AbrirTurnoInput, AppConfig, AppConfigInput, AppDataExport, AppStatePayload, AuthPayload,
+    BackupResult, BloquearPeriodoInput, CashMovement, CashMovementInput, CashRegister,
+    CashierStatus, Category, CategoryInput, CategoryUpdateInput, CloseCashRegisterInput,
+    ConsolidarPeriodoInput, ContaMesa, CreateMesaInput, CreateUserInput, DeleteCategoryInput,
+    EditarVendaInput, FiscalDayConfigInput, PagamentoMesaResult, PeriodoContabil,
+    RegistrarPagamentoMesaInput, DeleteProductInput, DeleteUserInput, ExportAppConfigResult,
+    ExportCsvInput, ExportCsvResult, FecharMesaInput, FecharTurnoInput, FecharVendaCaixaInput,
+    ImportAppConfigContentInput, ImportAppConfigInput, LocalUser, LogEntry, LogFiltros, LoginInput,
+    Mesa, MesaDetailed, MesaProdutoDetalhado, MesaProdutoInput, MesaSessao, OpenCashRegisterInput,
+    PrintResult, PrintSalesReportInput, PrintSalesReportResult, PrintTicketsInput, PrinterInfo,
+    Product, ProductInput, ProductUpdateInput, ProdutoVencendo, ReportsPayload, ResetSalesInput,
+    SaleAuditEntry, SaveMesaInput, StockAdjustInput, StockMovement, TicketData,
+    TurnoOperacional, UpdateMesaClienteInput, UpdateUserInput, VerifyTicketInput,
     VerifyTicketResult,
 };
 use crate::{printer, AppContext};
@@ -690,4 +693,145 @@ fn open_external_url(_url: &str) -> std::io::Result<()> {
         std::io::ErrorKind::Unsupported,
         "sistema operacional sem abridor de URL configurado",
     ))
+}
+
+#[tauri::command]
+pub fn registrar_pagamento_mesa(
+    input: RegistrarPagamentoMesaInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<PagamentoMesaResult> {
+    let result = state
+        .database
+        .registrar_pagamento_mesa(input)
+        .map_err(CommandError::from)?;
+    if let Some(ticket) = &result.ticket {
+        if let Ok(config) = state.database.get_config() {
+            let _ = printer::print_pdv_ticket(&config, ticket);
+        }
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn get_conta_mesa(id_mesa: i64, state: State<'_, AppContext>) -> CommandResult<ContaMesa> {
+    state
+        .database
+        .get_conta_mesa(id_mesa)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn get_produtos_vencendo(
+    dias: i64,
+    state: State<'_, AppContext>,
+) -> CommandResult<Vec<ProdutoVencendo>> {
+    state
+        .database
+        .produtos_vencendo(dias)
+        .map_err(CommandError::from)
+}
+
+// ===========================================================================
+// FASE 5: Turno operacional + periodo contabil
+// ===========================================================================
+
+#[tauri::command]
+pub fn get_cashier_status(state: State<'_, AppContext>) -> CommandResult<CashierStatus> {
+    state
+        .database
+        .get_cashier_status()
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn abrir_turno(
+    input: AbrirTurnoInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<TurnoOperacional> {
+    state.database.abrir_turno(input).map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn fechar_turno(
+    input: FecharTurnoInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<TurnoOperacional> {
+    state
+        .database
+        .fechar_turno(input)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn listar_turnos_dia(
+    data: String,
+    state: State<'_, AppContext>,
+) -> CommandResult<Vec<TurnoOperacional>> {
+    state
+        .database
+        .listar_turnos_do_dia(&data)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn consolidar_periodo(
+    input: ConsolidarPeriodoInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<PeriodoContabil> {
+    state
+        .database
+        .consolidar_periodo(input)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn bloquear_periodo(
+    input: BloquearPeriodoInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<PeriodoContabil> {
+    state
+        .database
+        .bloquear_periodo(input)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn editar_venda(
+    input: EditarVendaInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<SaleAuditEntry> {
+    state
+        .database
+        .editar_venda(input)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn listar_auditoria_venda(
+    sale_id: i64,
+    state: State<'_, AppContext>,
+) -> CommandResult<Vec<SaleAuditEntry>> {
+    state
+        .database
+        .listar_auditoria_venda(sale_id)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn get_fiscal_day_config(state: State<'_, AppContext>) -> CommandResult<i64> {
+    state
+        .database
+        .get_fiscal_day_start_minutes()
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub fn set_fiscal_day_config(
+    input: FiscalDayConfigInput,
+    state: State<'_, AppContext>,
+) -> CommandResult<i64> {
+    state
+        .database
+        .set_fiscal_day_start_minutes(input.fiscal_day_start_minutes)
+        .map_err(CommandError::from)
 }

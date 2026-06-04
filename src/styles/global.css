@@ -1335,6 +1335,139 @@ select:disabled {
   line-height: 1.35;
 }
 
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent, #2563eb);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* ===== Guia rápido do caixa ===== */
+.guia-fluxo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0 10px;
+}
+
+.guia-fluxo-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--surface-muted, rgba(37, 99, 235, 0.08));
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+  font-weight: 600;
+  text-align: center;
+}
+
+.guia-fluxo-item small {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.guia-fluxo-seta {
+  font-size: 20px;
+  color: var(--text-muted);
+}
+
+.guia-passos {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.guia-passo {
+  display: grid;
+  grid-template-columns: 38px 36px 1fr;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+  background: var(--surface, #fff);
+}
+
+.guia-passo-num {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent, #2563eb);
+  color: #fff;
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.guia-passo-icon {
+  color: var(--accent, #2563eb);
+  display: grid;
+  place-items: center;
+}
+
+.guia-dupla-icon {
+  display: inline-flex;
+  flex-direction: column;
+  line-height: 0.7;
+}
+
+.guia-passo-texto h3 {
+  margin: 0 0 2px;
+  font-size: 15px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.guia-passo-local {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--surface-muted, rgba(37, 99, 235, 0.08));
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.guia-passo-texto p {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.guia-formula {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--surface-muted, rgba(37, 99, 235, 0.08));
+  border: 1px dashed var(--border, rgba(0, 0, 0, 0.15));
+  font-weight: 600;
+}
+
+.guia-formula span {
+  color: var(--accent, #2563eb);
+  font-size: 18px;
+}
+
+.guia-dicas {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
 .toast {
   position: fixed;
   right: 24px;
@@ -1543,4 +1676,12 @@ select:disabled {
     top: 112px;
     right: 14px;
   }
+}
+
+/* FASE 4 — rolar a lista de produtos do caixa em vez de estourar a tela */
+.cashier-product-list {
+  max-height: 60vh;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
 }

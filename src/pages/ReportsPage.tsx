@@ -1,6 +1,7 @@
 import { Download, Printer, RotateCcw, Upload } from "lucide-react";
 import { type ChangeEvent, useEffect, useRef, useState } from "react";
 import { Button } from "../components/ui/Button";
+import { SalesBarChart } from "../components/reports/SalesBarChart";
 import { Select } from "../components/ui/Select";
 import { TextInput } from "../components/ui/TextInput";
 import { adminService } from "../services/adminService";
@@ -167,6 +168,10 @@ export function ReportsPage({ currentUser, onMessage }: ReportsPageProps) {
         <div className="settings-section"><h2>Receita</h2><strong>{formatCurrency(reports.totalRevenueCents)}</strong></div>
         <div className="settings-section"><h2>Lucro estimado</h2><strong>{formatCurrency(reports.estimatedProfitCents)}</strong></div>
       </div>
+      <section className="settings-section">
+        <h2>Vendas dos últimos 7 dias</h2>
+        <SalesBarChart data={reports.salesByDay} />
+      </section>
       {isAdmin ? (
         <section className="settings-section">
           <div className="settings-section-title">

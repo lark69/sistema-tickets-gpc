@@ -1,4 +1,5 @@
 import type {
+  ContaMesa,
   FecharMesaInput,
   LogEntry,
   LogFiltros,
@@ -8,6 +9,8 @@ import type {
   MesaProdutoDetalhado,
   MesaProdutoInput,
   MesaSessao,
+  PagamentoMesaResult,
+  RegistrarPagamentoMesaInput,
   SaveMesaInput,
   TicketData
 } from "../types";
@@ -16,6 +19,14 @@ import { callCommand } from "./tauri";
 export const mesaService = {
   listMesas(): Promise<Mesa[]> {
     return callCommand<Mesa[]>("get_all_mesas");
+  },
+
+  getContaMesa(idMesa: number): Promise<ContaMesa> {
+    return callCommand<ContaMesa>("get_conta_mesa", { idMesa });
+  },
+
+  registrarPagamento(input: RegistrarPagamentoMesaInput): Promise<PagamentoMesaResult> {
+    return callCommand<PagamentoMesaResult>("registrar_pagamento_mesa", { input });
   },
 
   getDetails(idMesa: number): Promise<MesaDetailed> {

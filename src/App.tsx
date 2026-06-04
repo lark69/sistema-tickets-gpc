@@ -8,6 +8,8 @@ import { useAppData } from "./hooks/useAppData";
 import { useTheme } from "./hooks/useTheme";
 import { InitialSetupPage } from "./pages/InitialSetupPage";
 import { CashRegisterPage } from "./pages/CashRegisterPage";
+import { FecharCaixaPage } from "./pages/FecharCaixa";
+import { GuiaCaixaPage } from "./pages/GuiaCaixaPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { InventoryPage } from "./pages/InventoryPage";
 import { FirstAdminPage } from "./pages/FirstAdminPage";
@@ -100,6 +102,22 @@ export function App() {
     }
   }, [mode]);
 
+  useEffect(() => {
+    if (mode !== "app") return;
+    let active = true;
+    productService
+      .produtosVencendo(7)
+      .then((lista) => {
+        if (active && lista.length > 0) {
+          showMessage(`${lista.length} produto(s) vencem nos próximos 7 dias.`, "info");
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [mode]);
+
   async function refreshCategoriesAndProducts() {
     const [nextCategories] = await Promise.all([
       adminService.listCategories(),
@@ -123,13 +141,14 @@ export function App() {
   const canManageCashMovements = hasPermission(currentUser, "manageCashMovements");
   const allowedMenuRoutes = useMemo<AppRoute[]>(() => {
     const routes: AppRoute[] = [];
+    if (canManageCash) routes.push("fechar-caixa");
     if (canManageProducts) routes.push("inventory");
     if (canViewLogsReports) routes.push("reports", "logs");
     if (canManageTickets) routes.push("verify-ticket");
     if (canManageSettings) routes.push("settings");
     if (canManageUsers) routes.push("users");
     return routes;
-  }, [canManageProducts, canManageSettings, canManageTickets, canManageUsers, canViewLogsReports]);
+  }, [canManageCash, canManageProducts, canManageSettings, canManageTickets, canManageUsers, canViewLogsReports]);
 
   function restricted(message = "Usuario sem permissao para acessar esta area.") {
     return <section className="empty-state"><h2>{message}</h2></section>;
@@ -407,8 +426,27 @@ export function App() {
             await refreshProducts();
           }}
           onMessage={showMessage}
+          onNavigateFechamento={canManageCash ? () => setRoute("fechar-caixa") : undefined}
         />
       );
+    }
+
+    if (route === "fechar-caixa" && currentUser) {
+      if (!canManageCash) {
+        return restricted("Usuario sem permissao para fechar o caixa.");
+      }
+      return (
+        <FecharCaixaPage
+          currentUser={currentUser}
+          canManageCash={canManageCash}
+          onMessage={showMessage}
+          onOpenGuide={() => setRoute("guia-caixa")}
+        />
+      );
+    }
+
+    if (route === "guia-caixa" && currentUser) {
+      return <GuiaCaixaPage onBack={() => setRoute("fechar-caixa")} />;
     }
 
     if (route === "inventory" && currentUser) {

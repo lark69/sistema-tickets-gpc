@@ -4,6 +4,7 @@ import { TextInput } from "../components/ui/TextInput";
 import { adminService } from "../services/adminService";
 import type { LocalUser } from "../types";
 import { getErrorMessage } from "../utils/errors";
+import { validatePassword, validateUsername } from "../utils/validation";
 import { ALL_USER_PERMISSIONS } from "../utils/permissions";
 
 interface FirstAdminPageProps {
@@ -21,13 +22,15 @@ export function FirstAdminPage({ onCreated, onMessage }: FirstAdminPageProps) {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!username.trim()) {
-      setError("Informe o nome de usuario.");
+    const usernameError = validateUsername(username);
+    if (usernameError) {
+      setError(usernameError);
       return;
     }
 
-    if (password.length < 4) {
-      setError("A senha precisa ter pelo menos 4 caracteres.");
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+      setError(passwordError);
       return;
     }
 

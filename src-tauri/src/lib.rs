@@ -2,10 +2,11 @@ mod commands;
 mod database;
 mod error;
 mod models;
+mod payments;
 mod printer;
 
 use database::Database;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[derive(Clone)]
 pub struct AppContext {
@@ -26,7 +27,14 @@ pub fn run() {
             let database = Database::initialize(data_dir.join("portex_pdv.sqlite"))
                 .map_err(|error| error.to_string())?;
 
+            // FASE 4: alerta de validade no boot (push). Erros nao derrubam o app.
+            let vencendo = database.produtos_vencendo(7).unwrap_or_default();
+
             app.manage(AppContext { database });
+
+            if !vencendo.is_empty() {
+                let _ = app.emit("produtos-vencendo", vencendo);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -58,6 +66,19 @@ pub fn run() {
             commands::get_mesa_sessao,
             commands::fechar_mesa,
             commands::fechar_venda_caixa,
+            commands::registrar_pagamento_mesa,
+            commands::get_conta_mesa,
+            commands::get_produtos_vencendo,
+            commands::get_cashier_status,
+            commands::abrir_turno,
+            commands::fechar_turno,
+            commands::listar_turnos_dia,
+            commands::consolidar_periodo,
+            commands::bloquear_periodo,
+            commands::editar_venda,
+            commands::listar_auditoria_venda,
+            commands::get_fiscal_day_config,
+            commands::set_fiscal_day_config,
             commands::get_logs,
             commands::login,
             commands::list_users,

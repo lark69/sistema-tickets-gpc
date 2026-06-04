@@ -6,6 +6,8 @@ export type AppRoute =
   | "tables"
   | "logs"
   | "cash"
+  | "fechar-caixa"
+  | "guia-caixa"
   | "inventory"
   | "reports"
   | "users"
@@ -50,6 +52,7 @@ export interface Product {
   description?: string | null;
   createdAt: number;
   updatedAt: number;
+  validade?: number | null;
 }
 
 export type ProductUnit = "UN" | "KG" | "L" | "CX" | "PCT";
@@ -70,6 +73,7 @@ export interface ProductInput {
   stock: number;
   reorderLevel: number;
   description?: string | null;
+  validade?: number | null;
 }
 
 export interface ProductUpdateInput extends ProductInput {
@@ -114,6 +118,46 @@ export interface ProductFormState {
   stock: string;
   reorderLevel: string;
   description: string;
+  validade: string;
+}
+
+export interface RegistrarPagamentoMesaInput {
+  idMesa: number;
+  formaPagamento: FormaPagamento;
+  valorCents: number;
+  aplicarAcrescimo?: boolean;
+  operatorName?: string | null;
+}
+
+export interface PagamentoMesa {
+  id: number;
+  formaPagamento: FormaPagamento;
+  valorCents: number;
+  trocoCents: number;
+  surchargeCents: number;
+  createdAt: number;
+}
+
+export interface ContaMesa {
+  idMesa: number;
+  totalCents: number;
+  pagoCents: number;
+  saldoCents: number;
+  pagamentos: PagamentoMesa[];
+}
+
+export interface ProdutoVencendo {
+  id: number;
+  name: string;
+  validade: number;
+  diasRestantes: number;
+}
+
+export interface PagamentoMesaResult {
+  finalizada: boolean;
+  saldoRestanteCents: number;
+  trocoCents: number;
+  ticket?: TicketData | null;
 }
 
 export type MesaStatus = "livre" | "ativa";
@@ -126,6 +170,7 @@ export interface Mesa {
   criadaEm: number;
   status: MesaStatus;
   tempoInicio?: number | null;
+  totalCents: number;
 }
 
 export interface MesaProdutoDetalhado {
@@ -279,6 +324,7 @@ export interface CashRegister {
 export interface CashMovement {
   id: number;
   cashRegisterId: number;
+  turnoId?: number | null;
   movementType: "sangria" | "suprimento" | string;
   amountCents: number;
   note?: string | null;
@@ -316,4 +362,92 @@ export interface PrintSalesReportResult {
 
 export interface BackupResult {
   path: string;
+}
+
+// ===========================================================================
+// FASE 5: Fechamento em cascata — Turno Operacional + Periodo Contabil
+// ===========================================================================
+
+export type TurnoStatus = "aberto" | "fechado" | "reconciliado";
+export type PeriodoStatus = "aberto" | "fechado" | "bloqueado";
+
+export interface TurnoOperacional {
+  id: number;
+  lojaId: number;
+  caixaId?: number | null;
+  operador: string;
+  dataInicio: number;
+  dataFim?: number | null;
+  status: TurnoStatus;
+  valorEsperadoCents: number;
+  valorFisicoCents?: number | null;
+  diferencaCents?: number | null;
+  observacoes?: string | null;
+  periodoContabilId?: number | null;
+  createdAt: number;
+  updatedAt: number;
+  saldoInicialCents: number;
+}
+
+export interface PeriodoContabil {
+  id: number;
+  lojaId: number;
+  data: string;
+  status: PeriodoStatus;
+  totalEsperadoCents: number;
+  totalRealCents: number;
+  bloqueadoEm?: number | null;
+  bloqueadoPor?: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SaleAuditEntry {
+  id: number;
+  saleId: number;
+  turnoOperacionalId?: number | null;
+  periodoContabilId?: number | null;
+  valorAnteriorCents: number;
+  valorNovoCents: number;
+  motivo: string;
+  usuario: string;
+  createdAt: number;
+}
+
+export interface CashierStatus {
+  dataContabil: string;
+  fiscalDayStartMinutes: number;
+  turnoAtivo?: TurnoOperacional | null;
+  periodoHoje: PeriodoContabil;
+  turnosDoDia: TurnoOperacional[];
+  esperadoAtualCents?: number | null;
+}
+
+export interface AbrirTurnoInput {
+  operador: string;
+  caixaId?: number | null;
+  saldoInicialCents: number;
+}
+
+export interface FecharTurnoInput {
+  turnoId: number;
+  valorFisicoCents: number;
+  observacoes?: string | null;
+}
+
+export interface ConsolidarPeriodoInput {
+  data?: string | null;
+  usuario: string;
+}
+
+export interface BloquearPeriodoInput {
+  periodoId: number;
+  usuario: string;
+}
+
+export interface EditarVendaInput {
+  saleId: number;
+  novoTotalCents: number;
+  motivo: string;
+  usuario: string;
 }

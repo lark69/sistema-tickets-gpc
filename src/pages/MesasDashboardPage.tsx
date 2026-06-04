@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { MesaCard } from "../components/mesa/MesaCard";
 import { MesaModal } from "../components/mesa/MesaModal";
-import { adminService } from "../services/adminService";
+import { cashierService } from "../services/cashierService";
 import { mesaService } from "../services/mesaService";
 import type { FormaPagamento, LocalUser, Mesa, MesaDetailed, Product } from "../types";
 import { getErrorMessage } from "../utils/errors";
+import { formatCurrency } from "../utils/currency";
 import { hasPermission } from "../utils/permissions";
 
 interface DraftItem {
@@ -38,12 +39,12 @@ export function MesasDashboardPage({
   async function loadMesas() {
     setLoading(true);
     try {
-      const [nextMesas, register] = await Promise.all([
+      const [nextMesas, status] = await Promise.all([
         mesaService.listMesas(),
-        adminService.getCurrentCashRegister()
+        cashierService.getStatus()
       ]);
       setMesas(nextMesas);
-      setCashOpen(Boolean(register));
+      setCashOpen(Boolean(status.turnoAtivo));
     } catch (err) {
       onMessage(getErrorMessage(err), "error");
     } finally {
@@ -53,11 +54,11 @@ export function MesasDashboardPage({
 
   async function openMesa(mesa: Mesa) {
     try {
-      const [nextDetails, register] = await Promise.all([
+      const [nextDetails, status] = await Promise.all([
         mesaService.getDetails(mesa.id),
-        adminService.getCurrentCashRegister()
+        cashierService.getStatus()
       ]);
-      setCashOpen(Boolean(register));
+      setCashOpen(Boolean(status.turnoAtivo));
       setDetails(nextDetails);
     } catch (err) {
       onMessage(getErrorMessage(err), "error");
@@ -94,11 +95,12 @@ export function MesasDashboardPage({
     items: DraftItem[],
     nomeCliente: string,
     formaPagamento: FormaPagamento,
-    valorPagoCents?: number | null
+    valorPagoCents?: number | null,
+    aplicarAcrescimo = false
   ) {
     if (!details) return;
     if (!cashOpen) {
-      onMessage("Abra o caixa antes de fechar uma mesa.", "error");
+      onMessage("Abra um turno antes de fechar uma mesa.", "error");
       return;
     }
     setClosing(true);
@@ -112,16 +114,28 @@ export function MesasDashboardPage({
           quantidade: item.quantidade
         }))
       });
-      const ticket = await mesaService.fecharMesa({
+      const resultado = await mesaService.registrarPagamento({
         idMesa: details.mesa.id,
         formaPagamento,
-        valorPagoCents,
+        valorCents: valorPagoCents ?? 0,
+        aplicarAcrescimo,
         operatorName
       });
-      setDetails(null);
-      await loadMesas();
-      await onProductsChanged();
-      onMessage(`Mesa ${String(ticket.numeroMesa).padStart(2, "0")} fechada com sucesso.`, "success");
+      if (resultado.finalizada) {
+        setDetails(null);
+        await loadMesas();
+        await onProductsChanged();
+        const numero = resultado.ticket?.numeroMesa ?? details.mesa.numero;
+        onMessage(`Mesa ${String(numero).padStart(2, "0")} fechada com sucesso.`, "success");
+      } else {
+        const atualizado = await mesaService.getDetails(details.mesa.id);
+        setDetails(atualizado);
+        await loadMesas();
+        onMessage(
+          `Pagamento parcial recebido. Saldo devedor: ${formatCurrency(resultado.saldoRestanteCents)}.`,
+          "info"
+        );
+      }
     } catch (err) {
       onMessage(getErrorMessage(err), "error");
     } finally {

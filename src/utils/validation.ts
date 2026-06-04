@@ -44,3 +44,19 @@ export function validateConfig(config: AppConfig): string | null {
 
   return null;
 }
+
+const USERNAME_RE = /^[A-Za-z0-9]{1,20}$/;
+
+export function validateUsername(username: string): string | null {
+  if (!USERNAME_RE.test(username.trim())) {
+    return "Usuário: apenas letras e números, até 20 caracteres, sem espaços.";
+  }
+  return null;
+}
+
+export function validatePassword(password: string): string | null {
+  if (password.length < 4 || password.length > 30) {
+    return "A senha deve ter de 4 a 30 caracteres.";
+  }
+  return null;
+}

@@ -1,20 +1,23 @@
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    AppConfig, AppConfigInput, AppDataExport, AuthPayload, CashMovement, CashMovementInput,
-    CashRegister, Category, CategoryInput, CategoryUpdateInput, CloseCashRegisterInput,
-    CreateMesaInput, CreateUserInput, DeleteCategoryInput, DeleteUserInput, ExportedCategory,
-    ExportedProduct, FecharMesaInput, FecharVendaCaixaInput, IssuedTicket, LocalUser, LogEntry,
-    LogFiltros, LoginInput, Mesa, MesaDetailed, MesaProdutoDetalhado, MesaProdutoInput, MesaSessao,
-    OpenCashRegisterInput, Product, ProductInput, ProductUpdateInput, ReportsPayload,
+    AbrirTurnoInput, AppConfig, AppConfigInput, AppDataExport, AuthPayload, BloquearPeriodoInput,
+    CashMovement, CashMovementInput, CashRegister, CashierStatus, Category, CategoryInput,
+    CategoryUpdateInput, CloseCashRegisterInput, ConsolidarPeriodoInput, ContaMesa,
+    PagamentoMesaResult, ProdutoVencendo, RegistrarPagamentoMesaInput,
+    CreateMesaInput, CreateUserInput, DeleteCategoryInput, DeleteUserInput, EditarVendaInput,
+    ExportedCategory, ExportedProduct, FecharMesaInput, FecharTurnoInput, FecharVendaCaixaInput,
+    IssuedTicket, LocalUser, LogEntry, LogFiltros, LoginInput, Mesa, MesaDetailed,
+    MesaProdutoDetalhado, MesaProdutoInput, MesaSessao, OpenCashRegisterInput, PeriodoContabil,
+    PeriodoStatus, Product, ProductInput, ProductUpdateInput, ReportsPayload, SaleAuditEntry,
     SaleCartItemInput, SalesByDay, SalesReportData, StockAdjustInput, StockMovement, TicketData,
-    TicketProduto, TopProductReport, UpdateUserInput,
+    TicketProduto, TopProductReport, TurnoOperacional, TurnoStatus, UpdateUserInput,
 };
 use chrono::{Datelike, Days, Local, NaiveDate, NaiveDateTime, TimeZone};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 static TICKET_COUNTER: AtomicU64 = AtomicU64::new(1);
 const MANAGE_PRODUCTS_PERMISSION: &str = "manageProducts";
@@ -206,6 +209,7 @@ impl Database {
                 stock: product.stock,
                 reorder_level: product.reorder_level,
                 description: product.description,
+                validade: None,
             })?;
             normalized_products.push((normalized, category_name));
         }
@@ -272,7 +276,8 @@ impl Database {
             "SELECT p.id, p.name, p.price_cents, p.barcode, p.cost_price_cents, p.unit,
                     p.category_id, c.name, p.stock, p.reorder_level, p.description,
                     p.created_at, p.updated_at,
-                    COALESCE(sold.sold_quantity, 0)
+                    COALESCE(sold.sold_quantity, 0),
+                    p.validade
              FROM products p
              LEFT JOIN categories c ON c.id = p.category_id
              LEFT JOIN (
@@ -297,7 +302,8 @@ impl Database {
                 "SELECT p.id, p.name, p.price_cents, p.barcode, p.cost_price_cents, p.unit,
                         p.category_id, c.name, p.stock, p.reorder_level, p.description,
                         p.created_at, p.updated_at,
-                        COALESCE(sold.sold_quantity, 0)
+                        COALESCE(sold.sold_quantity, 0),
+                        p.validade
                  FROM products p
                  LEFT JOIN categories c ON c.id = p.category_id
                  LEFT JOIN (
@@ -322,8 +328,8 @@ impl Database {
         connection.execute(
             "INSERT INTO products (
                 name, price_cents, barcode, cost_price_cents, unit, category_id,
-                stock, reorder_level, description, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                stock, reorder_level, description, validade, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 normalized.name,
                 normalized.price_cents,
@@ -334,6 +340,7 @@ impl Database {
                 normalized.stock,
                 normalized.reorder_level,
                 normalized.description,
+                normalized.validade,
                 now,
                 now
             ],
@@ -374,6 +381,7 @@ impl Database {
             stock: input.stock,
             reorder_level: input.reorder_level,
             description: input.description,
+            validade: input.validade,
         })?;
         let now = now_millis();
         let connection = self.connection()?;
@@ -382,8 +390,8 @@ impl Database {
             "UPDATE products
              SET name = ?1, price_cents = ?2, barcode = ?3, cost_price_cents = ?4,
                  unit = ?5, category_id = ?6, stock = ?7, reorder_level = ?8,
-                 description = ?9, updated_at = ?10
-             WHERE id = ?11",
+                 description = ?9, validade = ?10, updated_at = ?11
+             WHERE id = ?12",
             params![
                 normalized.name,
                 normalized.price_cents,
@@ -394,6 +402,7 @@ impl Database {
                 normalized.stock,
                 normalized.reorder_level,
                 normalized.description,
+                normalized.validade,
                 now,
                 input.id
             ],
@@ -516,9 +525,9 @@ impl Database {
     }
 
     pub fn ensure_tickets_can_be_printed(&self) -> AppResult<()> {
-        if self.get_current_cash_register()?.is_none() {
+        if self.get_turno_ativo()?.is_none() {
             return Err(AppError::InvalidInput(
-                "Abra o caixa antes de imprimir tickets.".to_string(),
+                "Abra um turno antes de imprimir tickets.".to_string(),
             ));
         }
 
@@ -817,9 +826,11 @@ impl Database {
         let mut statement = connection.prepare(
             "SELECT m.id, m.numero, m.capacidade, m.criada_em,
                     CASE WHEN COALESCE(SUM(mp.quantidade), 0) > 0 THEN 'ativa' ELSE 'livre' END AS status,
-                    ms.tempo_inicio
+                    ms.tempo_inicio,
+                    COALESCE(SUM(mp.quantidade * p.price_cents), 0) AS total_cents
              FROM mesas m
              LEFT JOIN mesa_produtos mp ON mp.id_mesa = m.id
+             LEFT JOIN products p ON p.id = mp.id_produto
              LEFT JOIN mesa_sessao ms ON ms.id_mesa = m.id AND ms.tempo_fim IS NULL
              WHERE m.numero <= (SELECT table_count FROM app_config WHERE id = 1)
              GROUP BY m.id, m.numero, m.capacidade, m.criada_em, ms.tempo_inicio
@@ -863,9 +874,11 @@ impl Database {
             .query_row(
                 "SELECT m.id, m.numero, m.capacidade, m.criada_em,
                         CASE WHEN COALESCE(SUM(mp.quantidade), 0) > 0 THEN 'ativa' ELSE 'livre' END AS status,
-                        ms.tempo_inicio
+                        ms.tempo_inicio,
+                        COALESCE(SUM(mp.quantidade * p.price_cents), 0) AS total_cents
                  FROM mesas m
                  LEFT JOIN mesa_produtos mp ON mp.id_mesa = m.id
+                 LEFT JOIN products p ON p.id = mp.id_produto
                  LEFT JOIN mesa_sessao ms ON ms.id_mesa = m.id AND ms.tempo_fim IS NULL
                  WHERE m.id = ?1
                  GROUP BY m.id, m.numero, m.capacidade, m.criada_em, ms.tempo_inicio",
@@ -875,6 +888,64 @@ impl Database {
             .optional()?;
 
         mesa.ok_or_else(|| AppError::InvalidInput("Mesa nao encontrada.".to_string()))
+    }
+
+    // ===== FASE 4: pagamento parcial + alerta de validade =====
+
+    pub fn registrar_pagamento_mesa(
+        &self,
+        input: RegistrarPagamentoMesaInput,
+    ) -> AppResult<PagamentoMesaResult> {
+        let operator = input
+            .operator_name
+            .as_deref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .unwrap_or("caixa")
+            .to_string();
+        let turno = self.get_turno_ativo()?.ok_or_else(|| {
+            AppError::InvalidInput(
+                "Abra um turno em Fechamento antes de receber pagamentos.".to_string(),
+            )
+        })?;
+        let connection = self.connection()?;
+        crate::payments::registrar_pagamento_mesa(
+            &connection,
+            input.id_mesa,
+            &input.forma_pagamento,
+            input.valor_cents,
+            &operator,
+            input.aplicar_acrescimo.unwrap_or(false),
+            turno.id,
+        )
+    }
+
+    pub fn get_conta_mesa(&self, id_mesa: i64) -> AppResult<ContaMesa> {
+        let connection = self.connection()?;
+        crate::payments::conta_mesa(&connection, id_mesa)
+    }
+
+    pub fn produtos_vencendo(&self, dias: i64) -> AppResult<Vec<ProdutoVencendo>> {
+        let connection = self.connection()?;
+        let now = now_millis();
+        let limite = now + dias.max(0) * 86_400_000;
+        let mut stmt = connection.prepare(
+            "SELECT id, name, validade FROM products
+             WHERE validade IS NOT NULL AND validade <= ?1
+             ORDER BY validade ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![limite], |row| {
+                let validade: i64 = row.get(2)?;
+                Ok(ProdutoVencendo {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    validade,
+                    dias_restantes: ((validade - now) as f64 / 86_400_000.0).floor() as i64,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     pub fn get_mesa_details(&self, id_mesa: i64) -> AppResult<MesaDetailed> {
@@ -914,9 +985,9 @@ impl Database {
 
     pub fn add_produto_to_mesa(&self, input: MesaProdutoInput) -> AppResult<()> {
         validate_mesa_product_input(&input)?;
-        if self.get_current_cash_register()?.is_none() {
+        if self.get_turno_ativo()?.is_none() {
             return Err(AppError::InvalidInput(
-                "Abra o caixa antes de adicionar produtos a mesa.".to_string(),
+                "Abra um turno antes de adicionar produtos a mesa.".to_string(),
             ));
         }
         let now = now_millis();
@@ -1015,9 +1086,9 @@ impl Database {
             *quantity > current_quantities.get(product_id).copied().unwrap_or(0)
         });
 
-        if adds_product && self.get_current_cash_register()?.is_none() {
+        if adds_product && self.get_turno_ativo()?.is_none() {
             return Err(AppError::InvalidInput(
-                "Abra o caixa antes de adicionar produtos a mesa.".to_string(),
+                "Abra um turno antes de adicionar produtos a mesa.".to_string(),
             ));
         }
 
@@ -1065,6 +1136,11 @@ impl Database {
         let forma_pagamento = validate_payment_method(&input.forma_pagamento)?;
         let operator_name = normalize_optional_text(input.operator_name.clone())
             .unwrap_or_else(|| "caixa".to_string());
+        let turno = self.get_turno_ativo()?.ok_or_else(|| {
+            AppError::InvalidInput(
+                "Abra um turno em Fechamento antes de fechar a mesa.".to_string(),
+            )
+        })?;
         let details = self.get_mesa_details(input.id_mesa)?;
 
         if details.produtos.is_empty() {
@@ -1151,6 +1227,27 @@ impl Database {
         )?;
         let sale_id = connection.last_insert_rowid();
 
+        // Registra o pagamento no razao (sale_payments) ja vinculado a venda e
+        // carimbado com o turno ativo, para que o dinheiro entre na gaveta do
+        // turno correto (mantem fechar_mesa consistente com o fluxo de mesa).
+        connection.execute(
+            "INSERT INTO sale_payments
+                (id_mesa, id_sessao, sale_id, forma_pagamento, valor_cents, troco_cents, surcharge_cents, operator_name, created_at, turno_operacional_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                input.id_mesa,
+                sessao.id,
+                sale_id,
+                ticket_data.forma_pagamento,
+                total_cents,
+                troco_cents.unwrap_or(0),
+                acrescimo_cents,
+                operator_name.clone(),
+                now,
+                turno.id
+            ],
+        )?;
+
         for item in &details.produtos {
             connection.execute(
                 "INSERT INTO sale_items (
@@ -1225,9 +1322,9 @@ impl Database {
         let operator_name = normalize_optional_text(input.operator_name.clone())
             .unwrap_or_else(|| "caixa".to_string());
 
-        if self.get_current_cash_register()?.is_none() {
+        if self.get_turno_ativo()?.is_none() {
             return Err(AppError::InvalidInput(
-                "Abra o caixa antes de finalizar uma venda.".to_string(),
+                "Abra um turno antes de finalizar uma venda.".to_string(),
             ));
         }
 
@@ -1497,11 +1594,8 @@ impl Database {
             ));
         }
 
-        if username.is_empty() || input.password.len() < 4 {
-            return Err(AppError::InvalidInput(
-                "Informe usuario e senha com pelo menos 4 caracteres.".to_string(),
-            ));
-        }
+        let username = validate_username(&username)?;
+        validate_password(&input.password)?;
         if role != "admin" && role != "operator" {
             return Err(AppError::InvalidInput(
                 "Perfil de usuario invalido.".to_string(),
@@ -1586,6 +1680,7 @@ impl Database {
         if username.is_empty() {
             return Err(AppError::InvalidInput("Informe o usuario.".to_string()));
         }
+        let username = validate_username(&username)?;
 
         if role != "admin" && role != "operator" {
             return Err(AppError::InvalidInput(
@@ -1594,11 +1689,7 @@ impl Database {
         }
 
         if let Some(password) = password.as_ref() {
-            if password.len() < 4 {
-                return Err(AppError::InvalidInput(
-                    "A senha precisa ter pelo menos 4 caracteres.".to_string(),
-                ));
-            }
+            validate_password(password)?;
         }
 
         let connection = self.connection()?;
@@ -1746,8 +1837,8 @@ impl Database {
     }
 
     pub fn add_cash_movement(&self, input: CashMovementInput) -> AppResult<CashMovement> {
-        let current = self.get_current_cash_register()?.ok_or_else(|| {
-            AppError::InvalidInput("Abra o caixa antes de registrar movimentos.".to_string())
+        let turno = self.get_turno_ativo()?.ok_or_else(|| {
+            AppError::InvalidInput("Abra um turno antes de registrar movimentos.".to_string())
         })?;
         let movement_type = input.movement_type.trim().to_lowercase();
         if movement_type != "sangria" && movement_type != "suprimento" {
@@ -1762,12 +1853,14 @@ impl Database {
         }
         let now = now_millis();
         let connection = self.connection()?;
+        // Fluxo unificado: movimentos pertencem ao turno. cash_register_id = 0
+        // (sentinela "sem caixa") por ser NOT NULL no schema legado.
         connection.execute(
             "INSERT INTO cash_movements (
-                cash_register_id, movement_type, amount_cents, note, operator_name, created_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                cash_register_id, turno_id, movement_type, amount_cents, note, operator_name, created_at
+             ) VALUES (0, ?1, ?2, ?3, ?4, ?5, ?6)",
             params![
-                current.id,
+                turno.id,
                 movement_type,
                 input.amount_cents,
                 input.note,
@@ -1777,7 +1870,8 @@ impl Database {
         )?;
         Ok(CashMovement {
             id: connection.last_insert_rowid(),
-            cash_register_id: current.id,
+            cash_register_id: 0,
+            turno_id: Some(turno.id),
             movement_type,
             amount_cents: input.amount_cents,
             note: input.note,
@@ -1789,7 +1883,7 @@ impl Database {
     pub fn list_cash_movements(&self) -> AppResult<Vec<CashMovement>> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
-            "SELECT id, cash_register_id, movement_type, amount_cents, note, operator_name, created_at
+            "SELECT id, cash_register_id, movement_type, amount_cents, note, operator_name, created_at, turno_id
              FROM cash_movements
              ORDER BY created_at DESC
              LIMIT 300",
@@ -1798,6 +1892,499 @@ impl Database {
             .query_map([], map_cash_movement)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(movements)
+    }
+
+    // =======================================================================
+    // FASE 5: Turno operacional + periodo contabil (fechamento em cascata)
+    // =======================================================================
+
+    pub fn get_fiscal_day_start_minutes(&self) -> AppResult<i64> {
+        let connection = self.connection()?;
+        let minutes = connection
+            .query_row(
+                "SELECT fiscal_day_start_minutes FROM app_config WHERE id = 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .unwrap_or(0);
+        Ok(minutes.clamp(0, 1439))
+    }
+
+    pub fn set_fiscal_day_start_minutes(&self, minutes: i64) -> AppResult<i64> {
+        if !(0..=1439).contains(&minutes) {
+            return Err(AppError::InvalidInput(
+                "Inicio do dia fiscal deve estar entre 0 e 1439 minutos.".to_string(),
+            ));
+        }
+        let connection = self.connection()?;
+        connection.execute(
+            "UPDATE app_config SET fiscal_day_start_minutes = ?1, updated_at = ?2 WHERE id = 1",
+            params![minutes, now_millis()],
+        )?;
+        Ok(minutes)
+    }
+
+    /// Data contabil (YYYY-MM-DD) a que um instante pertence, considerando o
+    /// deslocamento do dia fiscal (ex.: 06h -> vendas de 22h-6h caem no dia anterior).
+    fn data_contabil_de(&self, ts_millis: i64) -> AppResult<String> {
+        let offset_minutes = self.get_fiscal_day_start_minutes()?;
+        business_date(ts_millis, offset_minutes)
+    }
+
+    pub fn abrir_turno(&self, input: AbrirTurnoInput) -> AppResult<TurnoOperacional> {
+        let operador = input.operador.trim().to_string();
+        if operador.is_empty() {
+            return Err(AppError::InvalidInput("Informe o operador.".to_string()));
+        }
+        if input.saldo_inicial_cents < 0 {
+            return Err(AppError::InvalidInput(
+                "Fundo de troco invalido.".to_string(),
+            ));
+        }
+        if self.get_turno_ativo()?.is_some() {
+            return Err(AppError::InvalidInput(
+                "Ja existe um turno aberto. Feche-o antes de abrir outro.".to_string(),
+            ));
+        }
+        let now = now_millis();
+        let data = self.data_contabil_de(now)?;
+        let periodo = self.get_or_create_periodo(&data)?;
+        if periodo.status == PeriodoStatus::Bloqueado {
+            return Err(AppError::InvalidInput(
+                "O periodo contabil deste dia esta bloqueado.".to_string(),
+            ));
+        }
+        let connection = self.connection()?;
+        connection.execute(
+            "INSERT INTO turnos_operacionais
+                (loja_id, caixa_id, operador, data_inicio, status, saldo_inicial_cents,
+                 valor_esperado_cents, created_at, updated_at)
+             VALUES (1, ?1, ?2, ?3, 'aberto', ?4, 0, ?3, ?3)",
+            params![input.caixa_id, operador, now, input.saldo_inicial_cents],
+        )?;
+        let id = connection.last_insert_rowid();
+        self.get_turno_by_id(id)?
+            .ok_or_else(|| AppError::System("Nao foi possivel abrir o turno.".to_string()))
+    }
+
+    /// Dinheiro esperado na gaveta de um turno (saldo inicial + vendas em
+    /// dinheiro + suprimentos - sangrias), no intervalo [inicio, fim].
+    fn drawer_esperado_do_turno(
+        &self,
+        turno_id: i64,
+        saldo_inicial_cents: i64,
+        inicio: i64,
+        fim: i64,
+    ) -> AppResult<i64> {
+        let connection = self.connection()?;
+        let cash_direct: i64 = connection.query_row(
+            "SELECT COALESCE(SUM(total_cents), 0)
+             FROM sales
+             WHERE payment_method = 'dinheiro' AND sale_type != 'mesa'
+               AND created_at >= ?1 AND created_at <= ?2",
+            params![inicio, fim],
+            |row| row.get(0),
+        )?;
+        // Dinheiro de mesa: atribuido pelo TURNO em que o pagamento foi recebido
+        // (sale_payments.turno_operacional_id), nao pelo created_at da venda. Um
+        // pagamento parcial em dinheiro entra na gaveta do turno que o recebeu,
+        // mesmo que a conta so feche em outro turno.
+        let cash_mesa: i64 = connection.query_row(
+            "SELECT COALESCE(SUM(valor_cents), 0)
+             FROM sale_payments
+             WHERE forma_pagamento = 'dinheiro' AND turno_operacional_id = ?1",
+            params![turno_id],
+            |row| row.get(0),
+        )?;
+        let suprimentos: i64 = connection.query_row(
+            "SELECT COALESCE(SUM(amount_cents), 0)
+             FROM cash_movements
+             WHERE turno_id = ?1 AND movement_type = 'suprimento'",
+            params![turno_id],
+            |row| row.get(0),
+        )?;
+        let sangrias: i64 = connection.query_row(
+            "SELECT COALESCE(SUM(amount_cents), 0)
+             FROM cash_movements
+             WHERE turno_id = ?1 AND movement_type = 'sangria'",
+            params![turno_id],
+            |row| row.get(0),
+        )?;
+        Ok(saldo_inicial_cents + cash_direct + cash_mesa + suprimentos - sangrias)
+    }
+
+    pub fn fechar_turno(&self, input: FecharTurnoInput) -> AppResult<TurnoOperacional> {
+        if input.valor_fisico_cents < 0 {
+            return Err(AppError::InvalidInput(
+                "Valor fisico contado invalido.".to_string(),
+            ));
+        }
+        let turno = self
+            .get_turno_by_id(input.turno_id)?
+            .ok_or_else(|| AppError::InvalidInput("Turno nao encontrado.".to_string()))?;
+        if turno.status != TurnoStatus::Aberto {
+            return Err(AppError::InvalidInput(
+                "Este turno ja foi fechado.".to_string(),
+            ));
+        }
+
+        let now = now_millis();
+        let observacoes = normalize_optional_text(input.observacoes);
+        let connection = self.connection()?;
+        let tx = connection.unchecked_transaction()?;
+
+        // Vincula as vendas do intervalo do turno (ainda sem turno) a este turno.
+        tx.execute(
+            "UPDATE sales SET turno_operacional_id = ?1
+             WHERE turno_operacional_id IS NULL
+               AND created_at >= ?2 AND created_at <= ?3",
+            params![turno.id, turno.data_inicio, now],
+        )?;
+
+        // Valor esperado = dinheiro da gaveta (fundo + vendas em dinheiro +
+        // suprimentos - sangrias), comparado ao fisico contado.
+        let valor_esperado = self.drawer_esperado_do_turno(
+            turno.id,
+            turno.saldo_inicial_cents,
+            turno.data_inicio,
+            now,
+        )?;
+        let diferenca = input.valor_fisico_cents - valor_esperado;
+
+        tx.execute(
+            "UPDATE turnos_operacionais
+             SET status = 'fechado', data_fim = ?1, valor_esperado_cents = ?2,
+                 valor_fisico_cents = ?3, diferenca_cents = ?4, observacoes = ?5, updated_at = ?1
+             WHERE id = ?6",
+            params![
+                now,
+                valor_esperado,
+                input.valor_fisico_cents,
+                diferenca,
+                observacoes,
+                turno.id
+            ],
+        )?;
+        tx.commit()?;
+
+        self.get_turno_by_id(turno.id)?
+            .ok_or_else(|| AppError::System("Falha ao fechar o turno.".to_string()))
+    }
+
+    pub fn get_turno_by_id(&self, id: i64) -> AppResult<Option<TurnoOperacional>> {
+        let connection = self.connection()?;
+        connection
+            .query_row(
+                &format!("SELECT {TURNO_COLUMNS} FROM turnos_operacionais WHERE id = ?1"),
+                params![id],
+                map_turno,
+            )
+            .optional()
+            .map_err(AppError::from)
+    }
+
+    pub fn get_turno_ativo(&self) -> AppResult<Option<TurnoOperacional>> {
+        let connection = self.connection()?;
+        connection
+            .query_row(
+                &format!(
+                    "SELECT {TURNO_COLUMNS} FROM turnos_operacionais
+                     WHERE status = 'aberto'
+                     ORDER BY data_inicio DESC LIMIT 1"
+                ),
+                [],
+                map_turno,
+            )
+            .optional()
+            .map_err(AppError::from)
+    }
+
+    pub fn listar_turnos_do_dia(&self, data: &str) -> AppResult<Vec<TurnoOperacional>> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(&format!(
+            "SELECT {TURNO_COLUMNS} FROM turnos_operacionais t
+             WHERE t.periodo_contabil_id IN (SELECT id FROM periodos_contabeis WHERE data = ?1)
+                OR (t.periodo_contabil_id IS NULL AND t.data_inicio >= ?2 AND t.data_inicio < ?3)
+             ORDER BY t.data_inicio ASC"
+        ))?;
+        let (inicio, fim) = self.bounds_do_dia(data)?;
+        let turnos = statement
+            .query_map(params![data, inicio, fim], map_turno)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(turnos)
+    }
+
+    pub fn get_or_create_periodo(&self, data: &str) -> AppResult<PeriodoContabil> {
+        let connection = self.connection()?;
+        let now = now_millis();
+        connection.execute(
+            "INSERT OR IGNORE INTO periodos_contabeis
+                (loja_id, data, status, created_at, updated_at)
+             VALUES (1, ?1, 'aberto', ?2, ?2)",
+            params![data, now],
+        )?;
+        connection
+            .query_row(
+                &format!(
+                    "SELECT {PERIODO_COLUMNS} FROM periodos_contabeis WHERE loja_id = 1 AND data = ?1"
+                ),
+                params![data],
+                map_periodo,
+            )
+            .map_err(AppError::from)
+    }
+
+    pub fn consolidar_periodo(&self, input: ConsolidarPeriodoInput) -> AppResult<PeriodoContabil> {
+        if input.usuario.trim().is_empty() {
+            return Err(AppError::InvalidInput(
+                "Informe o usuario responsavel pela consolidacao.".to_string(),
+            ));
+        }
+        let data = match normalize_optional_text(input.data) {
+            Some(value) => value,
+            None => self.data_contabil_de(now_millis())?,
+        };
+        let periodo = self.get_or_create_periodo(&data)?;
+        if periodo.status == PeriodoStatus::Bloqueado {
+            return Err(AppError::InvalidInput(
+                "Periodo bloqueado nao pode ser reconsolidado.".to_string(),
+            ));
+        }
+        let turnos = self.listar_turnos_do_dia(&data)?;
+        if turnos.is_empty() {
+            return Err(AppError::InvalidInput(
+                "Nao ha turnos neste dia para consolidar.".to_string(),
+            ));
+        }
+        if turnos.iter().any(|t| t.status == TurnoStatus::Aberto) {
+            return Err(AppError::InvalidInput(
+                "Feche todos os turnos do dia antes de consolidar o periodo.".to_string(),
+            ));
+        }
+
+        let total_esperado: i64 = turnos.iter().map(|t| t.valor_esperado_cents).sum();
+        let total_real: i64 = turnos.iter().map(|t| t.valor_fisico_cents.unwrap_or(0)).sum();
+        let now = now_millis();
+        let (inicio, fim) = self.bounds_do_dia(&data)?;
+
+        let connection = self.connection()?;
+        let tx = connection.unchecked_transaction()?;
+        tx.execute(
+            "UPDATE periodos_contabeis
+             SET status = 'fechado', total_esperado_cents = ?1, total_real_cents = ?2,
+                 updated_at = ?3
+             WHERE id = ?4",
+            params![total_esperado, total_real, now, periodo.id],
+        )?;
+        // Marca turnos como reconciliados e os vincula ao periodo.
+        tx.execute(
+            "UPDATE turnos_operacionais
+             SET periodo_contabil_id = ?1, status = 'reconciliado', updated_at = ?2
+             WHERE status IN ('fechado', 'reconciliado')
+               AND (periodo_contabil_id = ?1
+                    OR (periodo_contabil_id IS NULL AND data_inicio >= ?3 AND data_inicio < ?4))",
+            params![periodo.id, now, inicio, fim],
+        )?;
+        // Carimba as vendas dos turnos deste periodo.
+        tx.execute(
+            "UPDATE sales
+             SET periodo_contabil_id = ?1
+             WHERE turno_operacional_id IN
+                (SELECT id FROM turnos_operacionais WHERE periodo_contabil_id = ?1)",
+            params![periodo.id],
+        )?;
+        tx.commit()?;
+
+        self.get_or_create_periodo(&data)
+    }
+
+    pub fn bloquear_periodo(&self, input: BloquearPeriodoInput) -> AppResult<PeriodoContabil> {
+        let usuario = input.usuario.trim().to_string();
+        if usuario.is_empty() {
+            return Err(AppError::InvalidInput(
+                "Informe o usuario responsavel.".to_string(),
+            ));
+        }
+        let connection = self.connection()?;
+        let status: Option<String> = connection
+            .query_row(
+                "SELECT status FROM periodos_contabeis WHERE id = ?1",
+                params![input.periodo_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let status = status
+            .ok_or_else(|| AppError::InvalidInput("Periodo nao encontrado.".to_string()))?;
+        match PeriodoStatus::parse(&status) {
+            PeriodoStatus::Aberto => {
+                return Err(AppError::InvalidInput(
+                    "Consolide o periodo antes de bloquear.".to_string(),
+                ))
+            }
+            PeriodoStatus::Bloqueado => {
+                return Err(AppError::InvalidInput(
+                    "Periodo ja esta bloqueado.".to_string(),
+                ))
+            }
+            PeriodoStatus::Fechado => {}
+        }
+        let now = now_millis();
+        connection.execute(
+            "UPDATE periodos_contabeis
+             SET status = 'bloqueado', bloqueado_em = ?1, bloqueado_por = ?2, updated_at = ?1
+             WHERE id = ?3",
+            params![now, usuario, input.periodo_id],
+        )?;
+        connection
+            .query_row(
+                &format!("SELECT {PERIODO_COLUMNS} FROM periodos_contabeis WHERE id = ?1"),
+                params![input.periodo_id],
+                map_periodo,
+            )
+            .map_err(AppError::from)
+    }
+
+    pub fn pode_editar_venda(&self, sale_id: i64) -> AppResult<bool> {
+        let connection = self.connection()?;
+        let periodo_id: Option<Option<i64>> = connection
+            .query_row(
+                "SELECT periodo_contabil_id FROM sales WHERE id = ?1",
+                params![sale_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let periodo_id = match periodo_id {
+            Some(value) => value,
+            None => return Err(AppError::InvalidInput("Venda nao encontrada.".to_string())),
+        };
+        let Some(periodo_id) = periodo_id else {
+            return Ok(true);
+        };
+        let status: String = connection.query_row(
+            "SELECT status FROM periodos_contabeis WHERE id = ?1",
+            params![periodo_id],
+            |row| row.get(0),
+        )?;
+        Ok(PeriodoStatus::parse(&status) != PeriodoStatus::Bloqueado)
+    }
+
+    pub fn editar_venda(&self, input: EditarVendaInput) -> AppResult<SaleAuditEntry> {
+        let usuario = input.usuario.trim().to_string();
+        let motivo = input.motivo.trim().to_string();
+        if usuario.is_empty() || motivo.is_empty() {
+            return Err(AppError::InvalidInput(
+                "Informe usuario e motivo do ajuste.".to_string(),
+            ));
+        }
+        if input.novo_total_cents < 0 {
+            return Err(AppError::InvalidInput("Valor invalido.".to_string()));
+        }
+        if !self.pode_editar_venda(input.sale_id)? {
+            return Err(AppError::InvalidInput(
+                "Venda pertence a um periodo bloqueado e nao pode ser editada.".to_string(),
+            ));
+        }
+
+        let connection = self.connection()?;
+        let tx = connection.unchecked_transaction()?;
+        let (valor_anterior, turno_id, periodo_id): (i64, Option<i64>, Option<i64>) = tx
+            .query_row(
+                "SELECT total_cents, turno_operacional_id, periodo_contabil_id
+                 FROM sales WHERE id = ?1",
+                params![input.sale_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(|_| AppError::InvalidInput("Venda nao encontrada.".to_string()))?;
+        let now = now_millis();
+        tx.execute(
+            "UPDATE sales SET total_cents = ?1 WHERE id = ?2",
+            params![input.novo_total_cents, input.sale_id],
+        )?;
+        tx.execute(
+            "INSERT INTO sale_audit
+                (sale_id, turno_operacional_id, periodo_contabil_id, valor_anterior_cents,
+                 valor_novo_cents, motivo, usuario, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                input.sale_id,
+                turno_id,
+                periodo_id,
+                valor_anterior,
+                input.novo_total_cents,
+                motivo,
+                usuario,
+                now
+            ],
+        )?;
+        let audit_id = tx.last_insert_rowid();
+        tx.commit()?;
+
+        Ok(SaleAuditEntry {
+            id: audit_id,
+            sale_id: input.sale_id,
+            turno_operacional_id: turno_id,
+            periodo_contabil_id: periodo_id,
+            valor_anterior_cents: valor_anterior,
+            valor_novo_cents: input.novo_total_cents,
+            motivo,
+            usuario,
+            created_at: now,
+        })
+    }
+
+    pub fn listar_auditoria_venda(&self, sale_id: i64) -> AppResult<Vec<SaleAuditEntry>> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT id, sale_id, turno_operacional_id, periodo_contabil_id, valor_anterior_cents,
+                    valor_novo_cents, motivo, usuario, created_at
+             FROM sale_audit WHERE sale_id = ?1 ORDER BY created_at DESC",
+        )?;
+        let rows = statement
+            .query_map(params![sale_id], map_sale_audit)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn get_cashier_status(&self) -> AppResult<CashierStatus> {
+        let fiscal_day_start_minutes = self.get_fiscal_day_start_minutes()?;
+        let data_contabil = self.data_contabil_de(now_millis())?;
+        let periodo_hoje = self.get_or_create_periodo(&data_contabil)?;
+        let turno_ativo = self.get_turno_ativo()?;
+        let turnos_do_dia = self.listar_turnos_do_dia(&data_contabil)?;
+        let esperado_atual_cents = match &turno_ativo {
+            Some(turno) => Some(self.drawer_esperado_do_turno(
+                turno.id,
+                turno.saldo_inicial_cents,
+                turno.data_inicio,
+                now_millis(),
+            )?),
+            None => None,
+        };
+        Ok(CashierStatus {
+            data_contabil,
+            fiscal_day_start_minutes,
+            turno_ativo,
+            periodo_hoje,
+            turnos_do_dia,
+            esperado_atual_cents,
+        })
+    }
+
+    /// Limites [inicio, fim) em millis de uma data contabil YYYY-MM-DD,
+    /// deslocados pelo inicio do dia fiscal.
+    fn bounds_do_dia(&self, data: &str) -> AppResult<(i64, i64)> {
+        let offset_minutes = self.get_fiscal_day_start_minutes()?;
+        let date = NaiveDate::parse_from_str(data, "%Y-%m-%d")
+            .map_err(|_| AppError::InvalidInput("Data contabil invalida.".to_string()))?;
+        let next = date
+            .checked_add_days(Days::new(1))
+            .ok_or_else(|| AppError::InvalidInput("Data invalida.".to_string()))?;
+        let offset_millis = offset_minutes * 60_000;
+        Ok((
+            local_start_of_day_millis(date)? + offset_millis,
+            local_start_of_day_millis(next)? + offset_millis,
+        ))
     }
 
     pub fn get_reports(&self) -> AppResult<ReportsPayload> {
@@ -1886,6 +2473,7 @@ impl Database {
         }
 
         let transaction = connection.unchecked_transaction()?;
+        transaction.execute("DELETE FROM sale_payments", [])?;
         transaction.execute("DELETE FROM sale_items", [])?;
         transaction.execute("DELETE FROM sales", [])?;
         transaction.commit()?;
@@ -1963,7 +2551,12 @@ impl Database {
     }
 
     fn connection(&self) -> AppResult<Connection> {
-        Connection::open(&self.path).map_err(AppError::from)
+        let conn = Connection::open(&self.path)?;
+        // foreign_keys e busy_timeout sao POR CONEXAO (precisam ser setados a cada open);
+        // journal_mode=WAL e persistente, mas reafirmar e barato e idempotente.
+        conn.busy_timeout(Duration::from_millis(5000))?;
+        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")?;
+        Ok(conn)
     }
 
     fn migrate(&self) -> AppResult<()> {
@@ -2170,11 +2763,116 @@ impl Database {
             "reorder_level",
             "INTEGER NOT NULL DEFAULT 0",
         )?;
+
+        // FASE 4: validade de produtos (millis; NULL = sem validade)
+        add_column_if_missing(&connection, "products", "validade", "INTEGER")?;
+
+        // FASE 4: livro-razao de pagamentos (pagamento parcial de mesas)
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS sale_payments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id_mesa INTEGER,
+                id_sessao INTEGER,
+                sale_id INTEGER,
+                forma_pagamento TEXT NOT NULL,
+                valor_cents INTEGER NOT NULL,
+                troco_cents INTEGER NOT NULL DEFAULT 0,
+                surcharge_cents INTEGER NOT NULL DEFAULT 0,
+                operator_name TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (id_sessao) REFERENCES mesa_sessao(id) ON DELETE CASCADE,
+                FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE SET NULL,
+                FOREIGN KEY (id_mesa) REFERENCES mesas(id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_sale_payments_sessao ON sale_payments(id_sessao);
+            CREATE INDEX IF NOT EXISTS idx_sale_payments_sale ON sale_payments(sale_id);",
+        )?;
         add_column_if_missing(
             &connection,
             "users",
             "permissions_json",
             &format!("TEXT NOT NULL DEFAULT '{DEFAULT_OPERATOR_PERMISSIONS_JSON}'"),
+        )?;
+
+        // FASE 5: fechamento em cascata (turno operacional -> periodo contabil).
+        // Dia fiscal deslocado (ex.: bar fecha as 06h): minutos a partir da meia-noite.
+        add_column_if_missing(
+            &connection,
+            "app_config",
+            "fiscal_day_start_minutes",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS periodos_contabeis (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                loja_id INTEGER NOT NULL DEFAULT 1,
+                data TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'aberto',
+                total_esperado_cents INTEGER NOT NULL DEFAULT 0,
+                total_real_cents INTEGER NOT NULL DEFAULT 0,
+                bloqueado_em INTEGER,
+                bloqueado_por TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                UNIQUE(loja_id, data)
+            );
+
+            CREATE TABLE IF NOT EXISTS turnos_operacionais (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                loja_id INTEGER NOT NULL DEFAULT 1,
+                caixa_id INTEGER,
+                operador TEXT NOT NULL,
+                data_inicio INTEGER NOT NULL,
+                data_fim INTEGER,
+                status TEXT NOT NULL DEFAULT 'aberto',
+                saldo_inicial_cents INTEGER NOT NULL DEFAULT 0,
+                valor_esperado_cents INTEGER NOT NULL DEFAULT 0,
+                valor_fisico_cents INTEGER,
+                diferenca_cents INTEGER,
+                observacoes TEXT,
+                periodo_contabil_id INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (caixa_id) REFERENCES cash_registers(id) ON DELETE SET NULL,
+                FOREIGN KEY (periodo_contabil_id) REFERENCES periodos_contabeis(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS sale_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sale_id INTEGER NOT NULL,
+                turno_operacional_id INTEGER,
+                periodo_contabil_id INTEGER,
+                valor_anterior_cents INTEGER NOT NULL,
+                valor_novo_cents INTEGER NOT NULL,
+                motivo TEXT NOT NULL,
+                usuario TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_periodos_data ON periodos_contabeis(loja_id, data);
+            CREATE INDEX IF NOT EXISTS idx_turnos_status ON turnos_operacionais(status);
+            CREATE INDEX IF NOT EXISTS idx_turnos_periodo ON turnos_operacionais(periodo_contabil_id);
+            CREATE INDEX IF NOT EXISTS idx_sale_audit_sale ON sale_audit(sale_id);",
+        )?;
+        add_column_if_missing(&connection, "sales", "turno_operacional_id", "INTEGER")?;
+        add_column_if_missing(&connection, "sales", "periodo_contabil_id", "INTEGER")?;
+        add_column_if_missing(
+            &connection,
+            "turnos_operacionais",
+            "saldo_inicial_cents",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        add_column_if_missing(&connection, "cash_movements", "turno_id", "INTEGER")?;
+        // Dinheiro de mesa entra na gaveta no INSTANTE do pagamento (nao no
+        // fechamento da conta). Carimbamos o turno ativo em cada pagamento para
+        // que o esperado da gaveta atribua o dinheiro ao turno certo, mesmo que
+        // a conta atravesse a virada de turno.
+        add_column_if_missing(
+            &connection,
+            "sale_payments",
+            "turno_operacional_id",
+            "INTEGER",
         )?;
 
         connection.execute(
@@ -2311,13 +3009,25 @@ impl Database {
     fn enrich_cash_register(&self, mut register: CashRegister) -> AppResult<CashRegister> {
         let connection = self.connection()?;
         let end = register.closed_at.unwrap_or_else(now_millis);
-        let cash_sales = connection.query_row(
+        // Dinheiro de VENDAS DIRETAS (nao-mesa) vem de `sales`...
+        let cash_direct = connection.query_row(
             "SELECT COALESCE(SUM(total_cents), 0)
              FROM sales
-             WHERE payment_method = 'dinheiro' AND created_at >= ?1 AND created_at <= ?2",
+             WHERE payment_method = 'dinheiro' AND sale_type != 'mesa'
+               AND created_at >= ?1 AND created_at <= ?2",
             params![register.opened_at, end],
             |row| row.get::<_, i64>(0),
         )?;
+        // ...e o dinheiro de MESAS vem do razao (apenas o valor aplicado, sem troco):
+        let cash_mesa = connection.query_row(
+            "SELECT COALESCE(SUM(sp.valor_cents), 0)
+             FROM sale_payments sp JOIN sales s ON s.id = sp.sale_id
+             WHERE sp.forma_pagamento = 'dinheiro' AND s.sale_type = 'mesa'
+               AND s.created_at >= ?1 AND s.created_at <= ?2",
+            params![register.opened_at, end],
+            |row| row.get::<_, i64>(0),
+        )?;
+        let cash_sales = cash_direct + cash_mesa;
         let suprimentos = connection.query_row(
             "SELECT COALESCE(SUM(amount_cents), 0)
              FROM cash_movements
@@ -2422,6 +3132,7 @@ fn map_product(row: &rusqlite::Row<'_>) -> rusqlite::Result<Product> {
         description: row.get(10)?,
         created_at: row.get(11)?,
         updated_at: row.get(12)?,
+        validade: row.get(14)?,
     })
 }
 
@@ -2433,6 +3144,7 @@ fn map_mesa(row: &rusqlite::Row<'_>) -> rusqlite::Result<Mesa> {
         criada_em: row.get(3)?,
         status: row.get(4)?,
         tempo_inicio: row.get(5)?,
+        total_cents: row.get(6)?,
     })
 }
 
@@ -2460,6 +3172,7 @@ fn map_mesa_produto(row: &rusqlite::Row<'_>) -> rusqlite::Result<MesaProdutoDeta
             description: row.get(15)?,
             created_at: row.get(16)?,
             updated_at: row.get(17)?,
+            validade: None,
         },
         subtotal_cents: quantidade * price_cents,
     })
@@ -2534,12 +3247,80 @@ fn map_cash_movement(row: &rusqlite::Row<'_>) -> rusqlite::Result<CashMovement> 
     Ok(CashMovement {
         id: row.get(0)?,
         cash_register_id: row.get(1)?,
+        turno_id: row.get(7)?,
         movement_type: row.get(2)?,
         amount_cents: row.get(3)?,
         note: row.get(4)?,
         operator_name: row.get(5)?,
         created_at: row.get(6)?,
     })
+}
+
+const TURNO_COLUMNS: &str = "id, loja_id, caixa_id, operador, data_inicio, data_fim, status, \
+    valor_esperado_cents, valor_fisico_cents, diferenca_cents, observacoes, periodo_contabil_id, \
+    created_at, updated_at, saldo_inicial_cents";
+
+const PERIODO_COLUMNS: &str = "id, loja_id, data, status, total_esperado_cents, total_real_cents, \
+    bloqueado_em, bloqueado_por, created_at, updated_at";
+
+fn map_turno(row: &rusqlite::Row<'_>) -> rusqlite::Result<TurnoOperacional> {
+    let status = row.get::<_, String>(6)?;
+    Ok(TurnoOperacional {
+        id: row.get(0)?,
+        loja_id: row.get(1)?,
+        caixa_id: row.get(2)?,
+        operador: row.get(3)?,
+        data_inicio: row.get(4)?,
+        data_fim: row.get(5)?,
+        status: TurnoStatus::parse(&status),
+        valor_esperado_cents: row.get(7)?,
+        valor_fisico_cents: row.get(8)?,
+        diferenca_cents: row.get(9)?,
+        observacoes: row.get(10)?,
+        periodo_contabil_id: row.get(11)?,
+        created_at: row.get(12)?,
+        updated_at: row.get(13)?,
+        saldo_inicial_cents: row.get(14)?,
+    })
+}
+
+fn map_periodo(row: &rusqlite::Row<'_>) -> rusqlite::Result<PeriodoContabil> {
+    let status = row.get::<_, String>(3)?;
+    Ok(PeriodoContabil {
+        id: row.get(0)?,
+        loja_id: row.get(1)?,
+        data: row.get(2)?,
+        status: PeriodoStatus::parse(&status),
+        total_esperado_cents: row.get(4)?,
+        total_real_cents: row.get(5)?,
+        bloqueado_em: row.get(6)?,
+        bloqueado_por: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
+    })
+}
+
+fn map_sale_audit(row: &rusqlite::Row<'_>) -> rusqlite::Result<SaleAuditEntry> {
+    Ok(SaleAuditEntry {
+        id: row.get(0)?,
+        sale_id: row.get(1)?,
+        turno_operacional_id: row.get(2)?,
+        periodo_contabil_id: row.get(3)?,
+        valor_anterior_cents: row.get(4)?,
+        valor_novo_cents: row.get(5)?,
+        motivo: row.get(6)?,
+        usuario: row.get(7)?,
+        created_at: row.get(8)?,
+    })
+}
+
+fn business_date(ts_millis: i64, offset_minutes: i64) -> AppResult<String> {
+    let shifted = ts_millis - offset_minutes * 60_000;
+    let datetime = Local
+        .timestamp_millis_opt(shifted)
+        .single()
+        .ok_or_else(|| AppError::InvalidInput("Instante invalido.".to_string()))?;
+    Ok(datetime.date_naive().format("%Y-%m-%d").to_string())
 }
 
 fn map_stock_movement(row: &rusqlite::Row<'_>) -> rusqlite::Result<StockMovement> {
@@ -2613,7 +3394,34 @@ fn validate_product(input: ProductInput) -> AppResult<ProductInput> {
         stock: input.stock,
         reorder_level: input.reorder_level.max(0),
         description,
+        validade: input.validade,
     })
+}
+
+// FASE 4: validacao rigida (equivale a regex ^[A-Za-z0-9]{1,20}$, sem nova crate)
+fn validate_username(username: &str) -> AppResult<String> {
+    let value = username.trim();
+    if value.is_empty() || value.chars().count() > 20 {
+        return Err(AppError::InvalidInput(
+            "O usuario deve ter de 1 a 20 caracteres.".to_string(),
+        ));
+    }
+    if !value.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(AppError::InvalidInput(
+            "O usuario deve conter apenas letras e numeros (sem espacos ou simbolos).".to_string(),
+        ));
+    }
+    Ok(value.to_string())
+}
+
+fn validate_password(password: &str) -> AppResult<()> {
+    let len = password.chars().count();
+    if len < 4 || len > 30 {
+        return Err(AppError::InvalidInput(
+            "A senha deve ter de 4 a 30 caracteres.".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_config(input: AppConfigInput) -> AppResult<AppConfigInput> {
@@ -3001,21 +3809,257 @@ mod tests {
             stock,
             reorder_level: 2,
             description: None,
+            validade: None,
         }
     }
 
     #[test]
-    fn cash_register_open_close_tracks_difference() {
+    fn simulacao_noite_de_bar_dinheiro_entre_turnos() {
         let (database, path) = test_database();
 
-        let opened = database
-            .open_cash_register(OpenCashRegisterInput {
-                initial_balance_cents: 10_000,
-                operator_name: "admin".to_string(),
-            })
-            .expect("cash register should open");
+        // Produtos do bar (preco 1000, custo 400 cada).
+        let chopp = database
+            .create_product(sample_product("Chopp", 100))
+            .expect("produto chopp");
+        let porcao = database
+            .create_product(sample_product("Porcao", 100))
+            .expect("produto porcao");
 
-        assert_eq!(opened.initial_balance_cents, 10_000);
+        // ===================== TURNO 1: Ana, fundo R$200 =====================
+        let t1 = database
+            .abrir_turno(AbrirTurnoInput {
+                operador: "Ana".into(),
+                caixa_id: None,
+                saldo_inicial_cents: 20_000,
+            })
+            .expect("abrir turno 1");
+
+        // Venda direta em DINHEIRO: 3x Chopp = 3000 (entra na gaveta).
+        database
+            .fechar_venda_caixa(FecharVendaCaixaInput {
+                forma_pagamento: "dinheiro".into(),
+                valor_pago_cents: Some(3_000),
+                operator_name: Some("Ana".into()),
+                items: vec![SaleCartItemInput {
+                    product_id: chopp.id,
+                    quantidade: 3,
+                }],
+            })
+            .expect("venda dinheiro");
+
+        // Venda direta no CREDITO: 2x Porcao (NAO entra na gaveta de dinheiro).
+        database
+            .fechar_venda_caixa(FecharVendaCaixaInput {
+                forma_pagamento: "credito".into(),
+                valor_pago_cents: None,
+                operator_name: Some("Ana".into()),
+                items: vec![SaleCartItemInput {
+                    product_id: porcao.id,
+                    quantidade: 2,
+                }],
+            })
+            .expect("venda credito");
+
+        // Mesa 1 quitada integralmente em DINHEIRO: 5x Chopp = 5000.
+        let mesa1 = database
+            .get_all_mesas()
+            .unwrap()
+            .into_iter()
+            .find(|m| m.numero == 1)
+            .unwrap();
+        database
+            .replace_mesa_produtos(
+                mesa1.id,
+                Some("Joao".into()),
+                vec![MesaProdutoInput {
+                    id_mesa: mesa1.id,
+                    id_produto: chopp.id,
+                    quantidade: 5,
+                }],
+            )
+            .expect("itens mesa 1");
+        let pay1 = database
+            .registrar_pagamento_mesa(RegistrarPagamentoMesaInput {
+                id_mesa: mesa1.id,
+                forma_pagamento: "dinheiro".into(),
+                valor_cents: 5_000,
+                aplicar_acrescimo: None,
+                operator_name: Some("Ana".into()),
+            })
+            .expect("pagamento mesa 1");
+        assert!(pay1.finalizada);
+
+        // Mesa 2: PARCIAL em dinheiro durante o turno da Ana. Consome 10000,
+        // a cliente Maria adianta 4000 e deixa 6000 em aberto (sai sem fechar).
+        let mesa2 = database
+            .get_all_mesas()
+            .unwrap()
+            .into_iter()
+            .find(|m| m.numero == 2)
+            .unwrap();
+        database
+            .replace_mesa_produtos(
+                mesa2.id,
+                Some("Maria".into()),
+                vec![MesaProdutoInput {
+                    id_mesa: mesa2.id,
+                    id_produto: porcao.id,
+                    quantidade: 10,
+                }],
+            )
+            .expect("itens mesa 2");
+        let parcial = database
+            .registrar_pagamento_mesa(RegistrarPagamentoMesaInput {
+                id_mesa: mesa2.id,
+                forma_pagamento: "dinheiro".into(),
+                valor_cents: 4_000,
+                aplicar_acrescimo: None,
+                operator_name: Some("Ana".into()),
+            })
+            .expect("pagamento parcial mesa 2");
+        assert!(!parcial.finalizada);
+        assert_eq!(parcial.saldo_restante_cents, 6_000);
+
+        // Sangria de R$10 (retirada da gaveta).
+        database
+            .add_cash_movement(CashMovementInput {
+                movement_type: "sangria".into(),
+                amount_cents: 1_000,
+                note: None,
+                operator_name: "Ana".into(),
+            })
+            .expect("sangria");
+
+        // Dinheiro FISICO real na gaveta da Ana ao final do turno:
+        //   fundo 20000 + venda direta 3000 + mesa1 5000 + mesa2 parcial 4000
+        //   - sangria 1000 = 31000
+        let gaveta_fisica_ana = 20_000 + 3_000 + 5_000 + 4_000 - 1_000;
+        assert_eq!(gaveta_fisica_ana, 31_000);
+
+        let esperado_ana = database
+            .get_cashier_status()
+            .unwrap()
+            .esperado_atual_cents
+            .unwrap();
+
+        // CORRECAO B: o parcial de 4000 e atribuido ao turno da Ana no instante
+        // do pagamento (sale_payments.turno_operacional_id), entao ENTRA no
+        // esperado dela mesmo com a conta ainda aberta. Esperado bate com a
+        // gaveta fisica.
+        assert_eq!(esperado_ana, 31_000);
+        let diferenca_ana = gaveta_fisica_ana - esperado_ana;
+        assert_eq!(diferenca_ana, 0); // sem sobra fantasma
+
+        let t1_fechado = database
+            .fechar_turno(FecharTurnoInput {
+                turno_id: t1.id,
+                valor_fisico_cents: gaveta_fisica_ana,
+                observacoes: None,
+            })
+            .expect("fechar turno 1");
+        assert_eq!(t1_fechado.valor_esperado_cents, 31_000);
+        assert_eq!(t1_fechado.diferenca_cents, Some(0));
+
+        // ===================== TURNO 2: Bruno, fundo R$150 =====================
+        let t2 = database
+            .abrir_turno(AbrirTurnoInput {
+                operador: "Bruno".into(),
+                caixa_id: None,
+                saldo_inicial_cents: 15_000,
+            })
+            .expect("abrir turno 2");
+
+        // Maria volta e quita a mesa2: 6000 em dinheiro -> finaliza a venda.
+        let quita = database
+            .registrar_pagamento_mesa(RegistrarPagamentoMesaInput {
+                id_mesa: mesa2.id,
+                forma_pagamento: "dinheiro".into(),
+                valor_cents: 6_000,
+                aplicar_acrescimo: None,
+                operator_name: Some("Bruno".into()),
+            })
+            .expect("quitar mesa 2");
+        assert!(quita.finalizada);
+
+        // Dinheiro FISICO real na gaveta do Bruno: fundo 15000 + 6000 = 21000.
+        let gaveta_fisica_bruno = 15_000 + 6_000;
+        assert_eq!(gaveta_fisica_bruno, 21_000);
+
+        let esperado_bruno = database
+            .get_cashier_status()
+            .unwrap()
+            .esperado_atual_cents
+            .unwrap();
+
+        // CORRECAO B: ao quitar a mesa2 agora, SO os 6000 recebidos pelo Bruno
+        // sao carimbados no turno dele. Os 4000 ja ficaram com a Ana. O esperado
+        // do Bruno bate com a gaveta fisica dele.
+        assert_eq!(esperado_bruno, 21_000); // 15000 + 6000
+        let diferenca_bruno = gaveta_fisica_bruno - esperado_bruno;
+        assert_eq!(diferenca_bruno, 0); // sem falta fantasma
+
+        let t2_fechado = database
+            .fechar_turno(FecharTurnoInput {
+                turno_id: t2.id,
+                valor_fisico_cents: gaveta_fisica_bruno,
+                observacoes: None,
+            })
+            .expect("fechar turno 2");
+        assert_eq!(t2_fechado.diferenca_cents, Some(0));
+
+        // ===================== PERIODO =====================
+        let periodo = database
+            .consolidar_periodo(ConsolidarPeriodoInput {
+                data: None,
+                usuario: "admin".into(),
+            })
+            .expect("consolidar periodo");
+
+        // CORRECAO B: agora cada operador fecha certo (Ana e Bruno com diferenca
+        // 0) E o periodo continua batendo. 31000 + 21000 dos dois lados.
+        assert_eq!(periodo.total_esperado_cents, 52_000); // 31000 + 21000
+        assert_eq!(periodo.total_real_cents, 52_000); // 31000 + 21000
+
+        // PROBLEMA C (de UX, tratado na tela): o total do periodo reflete SO a
+        // gaveta de dinheiro. A receita real do dia (relatorio) inclui credito/
+        // pix e e um numero diferente — por isso a tela rotula os dois separados.
+        let rel = database.get_sales_report("day").expect("relatorio do dia");
+        println!(
+            "PERIODO esperado={} real={} | RELATORIO faturamento={} (inclui cartao/pix)",
+            periodo.total_esperado_cents, periodo.total_real_cents, rel.total_sales_cents
+        );
+        assert!(
+            rel.total_sales_cents != periodo.total_esperado_cents,
+            "faturamento e gaveta de dinheiro nao sao a mesma coisa"
+        );
+
+        // Gatekeeper: sem turno aberto (ambos fechados) a venda e bloqueada.
+        let bloqueio = database.fechar_venda_caixa(FecharVendaCaixaInput {
+            forma_pagamento: "dinheiro".into(),
+            valor_pago_cents: Some(1_000),
+            operator_name: Some("Ninguem".into()),
+            items: vec![SaleCartItemInput {
+                product_id: chopp.id,
+                quantidade: 1,
+            }],
+        });
+        assert!(bloqueio.is_err());
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn turno_drawer_tracks_difference() {
+        let (database, path) = test_database();
+
+        let turno = database
+            .abrir_turno(AbrirTurnoInput {
+                operador: "admin".to_string(),
+                caixa_id: None,
+                saldo_inicial_cents: 10_000,
+            })
+            .expect("turno should open");
+        assert_eq!(turno.saldo_inicial_cents, 10_000);
 
         database
             .add_cash_movement(CashMovementInput {
@@ -3034,55 +4078,39 @@ mod tests {
             })
             .expect("cash withdrawal should be recorded");
 
-        let current = database
-            .get_current_cash_register()
-            .expect("current cash register query should work")
-            .expect("cash register should be open");
-        assert_eq!(current.expected_balance_cents, 13_000);
+        // Gaveta ao vivo = 10000 + 5000 - 2000 = 13000.
+        let status = database
+            .get_cashier_status()
+            .expect("cashier status should load");
+        assert_eq!(status.esperado_atual_cents, Some(13_000));
 
         let closed = database
-            .close_cash_register(CloseCashRegisterInput {
-                final_counted_cents: 12_900,
-                operator_name: "admin".to_string(),
+            .fechar_turno(FecharTurnoInput {
+                turno_id: turno.id,
+                valor_fisico_cents: 12_900,
+                observacoes: None,
             })
-            .expect("cash register should close");
+            .expect("turno should close");
 
-        assert_eq!(closed.expected_balance_cents, 13_000);
-        assert_eq!(closed.difference_cents, Some(-100));
+        assert_eq!(closed.valor_esperado_cents, 13_000);
+        assert_eq!(closed.diferenca_cents, Some(-100));
         let _ = std::fs::remove_file(path);
     }
 
     #[test]
-    fn cash_register_cannot_close_twice_on_same_day() {
+    fn cash_movement_requires_open_turno() {
         let (database, path) = test_database();
 
-        database
-            .open_cash_register(OpenCashRegisterInput {
-                initial_balance_cents: 1_000,
-                operator_name: "admin".to_string(),
-            })
-            .expect("first cash register should open");
-        database
-            .close_cash_register(CloseCashRegisterInput {
-                final_counted_cents: 1_000,
-                operator_name: "admin".to_string(),
-            })
-            .expect("first cash register should close");
-
-        database
-            .open_cash_register(OpenCashRegisterInput {
-                initial_balance_cents: 2_000,
-                operator_name: "admin".to_string(),
-            })
-            .expect("second cash register should open");
         let error = database
-            .close_cash_register(CloseCashRegisterInput {
-                final_counted_cents: 2_000,
+            .add_cash_movement(CashMovementInput {
+                movement_type: "sangria".to_string(),
+                amount_cents: 1_000,
+                note: None,
                 operator_name: "admin".to_string(),
             })
-            .expect_err("second close on the same day should be blocked");
+            .expect_err("cash movement without an open turno should be blocked");
 
-        assert!(format!("{error}").contains("fechar o caixa duas vezes no mesmo dia"));
+        assert!(format!("{error}").contains("Abra um turno"));
         let _ = std::fs::remove_file(path);
     }
 
@@ -3090,11 +4118,12 @@ mod tests {
     fn sale_decrements_stock_and_updates_reports() {
         let (database, path) = test_database();
         database
-            .open_cash_register(OpenCashRegisterInput {
-                initial_balance_cents: 0,
-                operator_name: "admin".to_string(),
+            .abrir_turno(AbrirTurnoInput {
+                operador: "admin".to_string(),
+                caixa_id: None,
+                saldo_inicial_cents: 0,
             })
-            .expect("cash register should open");
+            .expect("turno should open");
         let product = database
             .create_product(sample_product("Cafe", 3))
             .expect("product should be created");
@@ -3148,7 +4177,7 @@ mod tests {
     }
 
     #[test]
-    fn table_products_require_open_cash_register() {
+    fn table_products_require_open_turno() {
         let (database, path) = test_database();
         let product = database
             .create_product(sample_product("Suco", 4))
@@ -3170,32 +4199,33 @@ mod tests {
                     quantidade: 1,
                 }],
             )
-            .expect_err("closed cash register should block adding products");
+            .expect_err("closed turno should block adding products");
 
-        assert!(format!("{error}").contains("Abra o caixa"));
+        assert!(format!("{error}").contains("Abra um turno"));
         let _ = std::fs::remove_file(path);
     }
 
     #[test]
-    fn ticket_printing_requires_open_cash_register() {
+    fn ticket_printing_requires_open_turno() {
         let (database, path) = test_database();
 
         let error = database
             .ensure_tickets_can_be_printed()
-            .expect_err("closed cash register should block ticket printing");
+            .expect_err("closed turno should block ticket printing");
 
-        assert!(format!("{error}").contains("Abra o caixa"));
+        assert!(format!("{error}").contains("Abra um turno"));
 
         database
-            .open_cash_register(OpenCashRegisterInput {
-                initial_balance_cents: 0,
-                operator_name: "admin".to_string(),
+            .abrir_turno(AbrirTurnoInput {
+                operador: "admin".to_string(),
+                caixa_id: None,
+                saldo_inicial_cents: 0,
             })
-            .expect("cash register should open");
+            .expect("turno should open");
 
         database
             .ensure_tickets_can_be_printed()
-            .expect("tickets can be printed with an open cash register");
+            .expect("tickets can be printed with an open turno");
 
         let _ = std::fs::remove_file(path);
     }
@@ -3353,6 +4383,7 @@ mod tests {
                 stock: 12,
                 reorder_level: 3,
                 description: Some("Sem gas".to_string()),
+                validade: None,
             })
             .expect("product should be created");
 
@@ -3386,11 +4417,12 @@ mod tests {
     fn direct_cashier_sale_decrements_stock_and_updates_cash_balance() {
         let (database, path) = test_database();
         database
-            .open_cash_register(OpenCashRegisterInput {
-                initial_balance_cents: 2_000,
-                operator_name: "admin".to_string(),
+            .abrir_turno(AbrirTurnoInput {
+                operador: "admin".to_string(),
+                caixa_id: None,
+                saldo_inicial_cents: 2_000,
             })
-            .expect("cash register should open");
+            .expect("turno should open");
         let product = database
             .create_product(sample_product("Agua", 10))
             .expect("product should be created");
@@ -3414,11 +4446,11 @@ mod tests {
             .expect("product should still exist");
         assert_eq!(updated.stock, 8);
         assert_eq!(updated.sold_quantity, 2);
-        let register = database
-            .get_current_cash_register()
-            .expect("cash register query should work")
-            .expect("cash register should be open");
-        assert_eq!(register.expected_balance_cents, 4_000);
+        // Gaveta = fundo 2000 + venda em dinheiro 2000 = 4000.
+        let status = database
+            .get_cashier_status()
+            .expect("cashier status should load");
+        assert_eq!(status.esperado_atual_cents, Some(4_000));
         let _ = std::fs::remove_file(path);
     }
 
@@ -3506,5 +4538,153 @@ mod tests {
             vec!["addTableProducts".to_string(), "closeTable".to_string()]
         );
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn turno_e_periodo_fecham_em_cascata() {
+        let (database, path) = test_database();
+        let product = database
+            .create_product(sample_product("Cerveja", 100))
+            .expect("product should be created");
+
+        // Abre um turno operacional com fundo de troco de 10000.
+        let turno = database
+            .abrir_turno(AbrirTurnoInput {
+                operador: "caixa1".to_string(),
+                caixa_id: None,
+                saldo_inicial_cents: 10_000,
+            })
+            .expect("turno should open");
+        assert_eq!(turno.status, TurnoStatus::Aberto);
+        assert_eq!(turno.saldo_inicial_cents, 10_000);
+
+        // Nao pode haver dois turnos abertos simultaneamente.
+        assert!(database
+            .abrir_turno(AbrirTurnoInput {
+                operador: "caixa2".to_string(),
+                caixa_id: None,
+                saldo_inicial_cents: 0,
+            })
+            .is_err());
+
+        // Vendas em ticket (nao-dinheiro) nao entram na gaveta.
+        database
+            .record_ticket_sale(&product, 2)
+            .expect("sale should record");
+        database
+            .record_ticket_sale(&product, 3)
+            .expect("sale should record");
+
+        // Movimentos de gaveta atrelados ao turno ativo: +5000 -2000.
+        database
+            .add_cash_movement(CashMovementInput {
+                movement_type: "suprimento".to_string(),
+                amount_cents: 5_000,
+                note: None,
+                operator_name: "caixa1".to_string(),
+            })
+            .expect("suprimento should record");
+        database
+            .add_cash_movement(CashMovementInput {
+                movement_type: "sangria".to_string(),
+                amount_cents: 2_000,
+                note: None,
+                operator_name: "caixa1".to_string(),
+            })
+            .expect("sangria should record");
+
+        // Consolidar com turno ainda aberto deve falhar.
+        assert!(database
+            .consolidar_periodo(ConsolidarPeriodoInput {
+                data: None,
+                usuario: "gerente".to_string(),
+            })
+            .is_err());
+
+        // Gaveta esperada = 10000 + 0 (sem dinheiro) + 5000 - 2000 = 13000.
+        // Contando 12900 -> diferenca -100.
+        let fechado = database
+            .fechar_turno(FecharTurnoInput {
+                turno_id: turno.id,
+                valor_fisico_cents: 12_900,
+                observacoes: Some("diferenca de caixa".to_string()),
+            })
+            .expect("turno should close");
+        assert_eq!(fechado.status, TurnoStatus::Fechado);
+        assert_eq!(fechado.valor_esperado_cents, 13_000);
+        assert_eq!(fechado.diferenca_cents, Some(-100));
+
+        // Consolida o periodo do dia contabil.
+        let periodo = database
+            .consolidar_periodo(ConsolidarPeriodoInput {
+                data: None,
+                usuario: "gerente".to_string(),
+            })
+            .expect("periodo should consolidate");
+        assert_eq!(periodo.status, PeriodoStatus::Fechado);
+        assert_eq!(periodo.total_esperado_cents, 13_000);
+        assert_eq!(periodo.total_real_cents, 12_900);
+
+        // Status do caixa reflete a consolidacao.
+        let status = database.get_cashier_status().expect("status should load");
+        assert!(status.turno_ativo.is_none());
+        assert_eq!(status.turnos_do_dia.len(), 1);
+        assert_eq!(status.turnos_do_dia[0].status, TurnoStatus::Reconciliado);
+
+        // Bloqueia o periodo, tornando-o imutavel.
+        let bloqueado = database
+            .bloquear_periodo(BloquearPeriodoInput {
+                periodo_id: periodo.id,
+                usuario: "gerente".to_string(),
+            })
+            .expect("periodo should lock");
+        assert_eq!(bloqueado.status, PeriodoStatus::Bloqueado);
+
+        // Uma venda do periodo bloqueado nao pode ser editada.
+        let connection = database.connection().expect("connection should open");
+        let sale_id: i64 = connection
+            .query_row(
+                "SELECT id FROM sales WHERE periodo_contabil_id = ?1 LIMIT 1",
+                params![periodo.id],
+                |row| row.get(0),
+            )
+            .expect("sale should be linked to periodo");
+        assert!(!database
+            .pode_editar_venda(sale_id)
+            .expect("edit check should run"));
+        assert!(database
+            .editar_venda(EditarVendaInput {
+                sale_id,
+                novo_total_cents: 1,
+                motivo: "tentativa".to_string(),
+                usuario: "gerente".to_string(),
+            })
+            .is_err());
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn data_contabil_respeita_dia_fiscal_deslocado() {
+        // Dia fiscal comecando as 06:00: vendas de madrugada caem no dia anterior.
+        let offset = 6 * 60; // 06:00 em minutos
+        // 2026-06-04 02:00 local -> deve pertencer a 2026-06-03.
+        let madrugada = Local
+            .with_ymd_and_hms(2026, 6, 4, 2, 0, 0)
+            .single()
+            .expect("valid datetime")
+            .timestamp_millis();
+        assert_eq!(business_date(madrugada, offset).unwrap(), "2026-06-03");
+
+        // 2026-06-04 22:00 local -> mesmo dia 2026-06-04.
+        let noite = Local
+            .with_ymd_and_hms(2026, 6, 4, 22, 0, 0)
+            .single()
+            .expect("valid datetime")
+            .timestamp_millis();
+        assert_eq!(business_date(noite, offset).unwrap(), "2026-06-04");
+
+        // Sem deslocamento, segue o dia civil.
+        assert_eq!(business_date(madrugada, 0).unwrap(), "2026-06-04");
     }
 }

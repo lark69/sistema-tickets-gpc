@@ -2,6 +2,7 @@ import {
   BadgeCheck,
   BarChart3,
   Boxes,
+  CalendarClock,
   ClipboardList,
   Gauge,
   LogOut,
@@ -35,6 +36,7 @@ export function TopBar({
   const menuRef = useRef<HTMLDivElement | null>(null);
   const menuRoutes = useMemo(() => {
     const routes = [
+      { route: "fechar-caixa" as const, label: "Fechamento", icon: <CalendarClock size={18} /> },
       { route: "inventory" as const, label: "Estoque", icon: <Boxes size={18} /> },
       { route: "reports" as const, label: "Relatorios", icon: <BarChart3 size={18} /> },
       { route: "logs" as const, label: "Logs", icon: <ClipboardList size={18} /> },

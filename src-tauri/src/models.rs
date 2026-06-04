@@ -88,6 +88,7 @@ pub struct Product {
     pub description: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+    pub validade: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -102,6 +103,7 @@ pub struct ProductInput {
     pub stock: i64,
     pub reorder_level: i64,
     pub description: Option<String>,
+    pub validade: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -117,6 +119,7 @@ pub struct ProductUpdateInput {
     pub stock: i64,
     pub reorder_level: i64,
     pub description: Option<String>,
+    pub validade: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -176,6 +179,7 @@ pub struct Mesa {
     pub criada_em: i64,
     pub status: String,
     pub tempo_inicio: Option<i64>,
+    pub total_cents: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -334,6 +338,7 @@ pub struct CashRegister {
 pub struct CashMovement {
     pub id: i64,
     pub cash_register_id: i64,
+    pub turno_id: Option<i64>,
     pub movement_type: String,
     pub amount_cents: i64,
     pub note: Option<String>,
@@ -572,4 +577,202 @@ pub struct ExportCsvInput {
 #[serde(rename_all = "camelCase")]
 pub struct ExportCsvResult {
     pub path: String,
+}
+
+// ===== FASE 4: pagamento parcial + validade =====
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistrarPagamentoMesaInput {
+    pub id_mesa: i64,
+    pub forma_pagamento: String,
+    pub valor_cents: i64,
+    pub aplicar_acrescimo: Option<bool>,
+    pub operator_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PagamentoMesa {
+    pub id: i64,
+    pub forma_pagamento: String,
+    pub valor_cents: i64,
+    pub troco_cents: i64,
+    pub surcharge_cents: i64,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContaMesa {
+    pub id_mesa: i64,
+    pub total_cents: i64,
+    pub pago_cents: i64,
+    pub saldo_cents: i64,
+    pub pagamentos: Vec<PagamentoMesa>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PagamentoMesaResult {
+    pub finalizada: bool,
+    pub saldo_restante_cents: i64,
+    pub troco_cents: i64,
+    pub ticket: Option<TicketData>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProdutoVencendo {
+    pub id: i64,
+    pub name: String,
+    pub validade: i64,
+    pub dias_restantes: i64,
+}
+
+// ===========================================================================
+// FASE 5: Fechamento em cascata — Turno Operacional + Periodo Contabil
+// ===========================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TurnoStatus {
+    Aberto,
+    Fechado,
+    Reconciliado,
+}
+
+impl TurnoStatus {
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "fechado" => TurnoStatus::Fechado,
+            "reconciliado" => TurnoStatus::Reconciliado,
+            _ => TurnoStatus::Aberto,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PeriodoStatus {
+    Aberto,
+    Fechado,
+    Bloqueado,
+}
+
+impl PeriodoStatus {
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "fechado" => PeriodoStatus::Fechado,
+            "bloqueado" => PeriodoStatus::Bloqueado,
+            _ => PeriodoStatus::Aberto,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnoOperacional {
+    pub id: i64,
+    pub loja_id: i64,
+    pub caixa_id: Option<i64>,
+    pub operador: String,
+    pub data_inicio: i64,
+    pub data_fim: Option<i64>,
+    pub status: TurnoStatus,
+    pub valor_esperado_cents: i64,
+    pub valor_fisico_cents: Option<i64>,
+    pub diferenca_cents: Option<i64>,
+    pub observacoes: Option<String>,
+    pub periodo_contabil_id: Option<i64>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub saldo_inicial_cents: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeriodoContabil {
+    pub id: i64,
+    pub loja_id: i64,
+    pub data: String,
+    pub status: PeriodoStatus,
+    pub total_esperado_cents: i64,
+    pub total_real_cents: i64,
+    pub bloqueado_em: Option<i64>,
+    pub bloqueado_por: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaleAuditEntry {
+    pub id: i64,
+    pub sale_id: i64,
+    pub turno_operacional_id: Option<i64>,
+    pub periodo_contabil_id: Option<i64>,
+    pub valor_anterior_cents: i64,
+    pub valor_novo_cents: i64,
+    pub motivo: String,
+    pub usuario: String,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CashierStatus {
+    pub data_contabil: String,
+    pub fiscal_day_start_minutes: i64,
+    pub turno_ativo: Option<TurnoOperacional>,
+    pub periodo_hoje: PeriodoContabil,
+    pub turnos_do_dia: Vec<TurnoOperacional>,
+    /// Valor esperado da gaveta agora (ao vivo) para o turno ativo, se houver.
+    pub esperado_atual_cents: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AbrirTurnoInput {
+    pub operador: String,
+    pub caixa_id: Option<i64>,
+    #[serde(default)]
+    pub saldo_inicial_cents: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FecharTurnoInput {
+    pub turno_id: i64,
+    pub valor_fisico_cents: i64,
+    pub observacoes: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsolidarPeriodoInput {
+    pub data: Option<String>,
+    pub usuario: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BloquearPeriodoInput {
+    pub periodo_id: i64,
+    pub usuario: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditarVendaInput {
+    pub sale_id: i64,
+    pub novo_total_cents: i64,
+    pub motivo: String,
+    pub usuario: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FiscalDayConfigInput {
+    pub fiscal_day_start_minutes: i64,
 }
