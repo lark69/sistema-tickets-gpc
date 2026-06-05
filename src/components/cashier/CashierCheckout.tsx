@@ -1,4 +1,4 @@
-import { Banknote, CreditCard, Landmark, QrCode, X } from "lucide-react";
+import { Banknote, CreditCard, HandPlatter, Landmark, QrCode, X } from "lucide-react";
 import { useState } from "react";
 import type { FormaPagamento, Product } from "../../types";
 import { centsToInput, currencyToCents, formatCurrency } from "../../utils/currency";
@@ -15,24 +15,33 @@ interface CashierCheckoutProps {
   items: CashierCartItem[];
   closing: boolean;
   onClose: () => void;
-  onConfirm: (formaPagamento: FormaPagamento, valorPagoCents?: number | null) => Promise<void>;
+  onConfirm: (
+    formaPagamento: FormaPagamento,
+    valorPagoCents?: number | null,
+    aplicarAcrescimo?: boolean,
+    aplicarGarcom?: boolean
+  ) => Promise<void>;
 }
 
 export function CashierCheckout({ items, closing, onClose, onConfirm }: CashierCheckoutProps) {
   const [cashModal, setCashModal] = useState(false);
   const [creditModal, setCreditModal] = useState(false);
   const [cashValue, setCashValue] = useState("");
+  const [aplicarGarcom, setAplicarGarcom] = useState(false);
   const total = items.reduce((sum, item) => sum + item.product.priceCents * item.quantidade, 0);
+  const garcomFee = aplicarGarcom ? Math.round(total * 0.1) : 0;
   const creditFee = Math.round(total * 0.05);
-  const creditTotal = total + creditFee;
+  // Dinheiro/PIX/Débito pagam total + garçom; Crédito soma também os 5%.
+  const totalComGarcom = total + garcomFee;
+  const creditTotal = total + creditFee + garcomFee;
   const paidCents = currencyToCents(cashValue);
-  const changeCents = Math.max(0, paidCents - total);
+  const changeCents = Math.max(0, paidCents - totalComGarcom);
 
   async function confirmCash() {
-    if (paidCents < total) {
+    if (paidCents < totalComGarcom) {
       return;
     }
-    await onConfirm("dinheiro", paidCents);
+    await onConfirm("dinheiro", paidCents, false, aplicarGarcom);
   }
 
   return (
@@ -57,14 +66,37 @@ export function CashierCheckout({ items, closing, onClose, onConfirm }: CashierC
 
           <div className="checkout-total">TOTAL: {formatCurrency(total)}</div>
 
+          {/* Taxa de garçom (10%) — vale para qualquer forma de pagamento */}
+          <div className="checkout-fees">
+            <Button
+              type="button"
+              variant={aplicarGarcom ? "primary" : "secondary"}
+              icon={<HandPlatter size={16} />}
+              onClick={() => setAplicarGarcom((value) => !value)}
+            >
+              {aplicarGarcom ? "Garçom 10% ativo" : "Adicionar 10% do garçom"}
+            </Button>
+            {garcomFee > 0 ? (
+              <span>+ {formatCurrency(garcomFee)} • total {formatCurrency(totalComGarcom)}</span>
+            ) : null}
+          </div>
+
           <div className="payment-grid">
-            <Button icon={<QrCode size={18} />} loading={closing} onClick={() => onConfirm("pix")}>
+            <Button
+              icon={<QrCode size={18} />}
+              loading={closing}
+              onClick={() => onConfirm("pix", null, false, aplicarGarcom)}
+            >
               PIX
             </Button>
             <Button icon={<Banknote size={18} />} variant="secondary" onClick={() => setCashModal(true)}>
               Dinheiro
             </Button>
-            <Button icon={<Landmark size={18} />} loading={closing} onClick={() => onConfirm("debito")}>
+            <Button
+              icon={<Landmark size={18} />}
+              loading={closing}
+              onClick={() => onConfirm("debito", null, false, aplicarGarcom)}
+            >
               Debito
             </Button>
             <Button icon={<CreditCard size={18} />} variant="secondary" onClick={() => setCreditModal(true)}>
@@ -81,16 +113,18 @@ export function CashierCheckout({ items, closing, onClose, onConfirm }: CashierC
               label="Quanto o cliente pagou em dinheiro?"
               value={cashValue}
               onChange={(event) => setCashValue(event.target.value)}
-              placeholder={centsToInput(total)}
+              placeholder={centsToInput(totalComGarcom)}
               autoFocus
             />
             <div className="payment-breakdown">
               <span>Valor da venda: {formatCurrency(total)}</span>
+              {garcomFee > 0 ? <span>Garçom (10%): {formatCurrency(garcomFee)}</span> : null}
+              <span>Total a pagar: {formatCurrency(totalComGarcom)}</span>
               <span>Valor pago: {formatCurrency(paidCents)}</span>
               <strong>Troco: {formatCurrency(changeCents)}</strong>
             </div>
             <div className="form-actions">
-              <Button loading={closing} disabled={paidCents < total} onClick={confirmCash}>
+              <Button loading={closing} disabled={paidCents < totalComGarcom} onClick={confirmCash}>
                 Confirmar
               </Button>
               <Button variant="secondary" icon={<X size={18} />} onClick={() => setCashModal(false)}>
@@ -107,10 +141,11 @@ export function CashierCheckout({ items, closing, onClose, onConfirm }: CashierC
             <div className="payment-breakdown">
               <span>Subtotal: {formatCurrency(total)}</span>
               <span>Acrescimo (5%): {formatCurrency(creditFee)}</span>
+              {garcomFee > 0 ? <span>Garçom (10%): {formatCurrency(garcomFee)}</span> : null}
               <strong>TOTAL COM ACRESCIMO: {formatCurrency(creditTotal)}</strong>
             </div>
             <div className="form-actions">
-              <Button loading={closing} onClick={() => onConfirm("credito")}>
+              <Button loading={closing} onClick={() => onConfirm("credito", null, true, aplicarGarcom)}>
                 Confirmar
               </Button>
               <Button variant="secondary" icon={<X size={18} />} onClick={() => setCreditModal(false)}>

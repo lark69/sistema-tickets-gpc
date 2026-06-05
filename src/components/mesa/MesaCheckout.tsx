@@ -1,4 +1,4 @@
-import { Banknote, CreditCard, Landmark, Percent, QrCode } from "lucide-react";
+import { Banknote, CreditCard, HandPlatter, Landmark, Percent, QrCode } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { ContaMesa, FormaPagamento, MesaDetailed } from "../../types";
 import { centsToInput, currencyToCents, formatCurrency } from "../../utils/currency";
@@ -14,15 +14,25 @@ interface MesaCheckoutProps {
   onConfirm: (
     formaPagamento: FormaPagamento,
     valorCents: number,
-    aplicarAcrescimo: boolean
+    aplicarAcrescimo: boolean,
+    aplicarGarcom: boolean
   ) => Promise<void>;
 }
+
+const FORMAS: Array<{ forma: FormaPagamento; label: string; icon: typeof QrCode }> = [
+  { forma: "pix", label: "PIX", icon: QrCode },
+  { forma: "dinheiro", label: "Dinheiro", icon: Banknote },
+  { forma: "debito", label: "Débito", icon: Landmark },
+  { forma: "credito", label: "Crédito", icon: CreditCard }
+];
 
 export function MesaCheckout({ details, closing, onClose, onConfirm }: MesaCheckoutProps) {
   const [conta, setConta] = useState<ContaMesa | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [valorReceber, setValorReceber] = useState(centsToInput(details.subtotalCents));
+  const [selectedForma, setSelectedForma] = useState<FormaPagamento | null>(null);
   const [aplicarAcrescimo, setAplicarAcrescimo] = useState(false);
+  const [aplicarGarcom, setAplicarGarcom] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -41,27 +51,40 @@ export function MesaCheckout({ details, closing, onClose, onConfirm }: MesaCheck
   const pago = conta?.pagoCents ?? 0;
   const saldo = Math.max(0, total - pago);
 
-  // ao (re)carregar a conta, sugere o saldo como valor a receber
+  // ao (re)carregar a conta, sugere o saldo como valor a receber e zera opções
   useEffect(() => {
     setValorReceber(centsToInput(saldo));
+    setSelectedForma(null);
     setAplicarAcrescimo(false);
+    setAplicarGarcom(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conta]);
 
   const valorCents = currencyToCents(valorReceber);
-  const acrescimoCents = aplicarAcrescimo ? Math.round(valorCents * 0.05) : 0;
+  const acrescimoCreditoCents =
+    selectedForma === "credito" && aplicarAcrescimo ? Math.round(valorCents * 0.05) : 0;
+  const acrescimoGarcomCents = aplicarGarcom ? Math.round(valorCents * 0.1) : 0;
+  const acrescimoCents = acrescimoCreditoCents + acrescimoGarcomCents;
+  const totalCobrar = valorCents + acrescimoCents;
   const trocoCents = Math.max(0, valorCents - saldo);
   const restante = Math.max(0, saldo - valorCents);
   const excedeSaldo = valorCents > saldo;
+  const naoDinheiroExcede = selectedForma !== null && selectedForma !== "dinheiro" && excedeSaldo;
   const elapsed = useMemo(() => {
     if (!details.sessao?.tempoInicio) return "00:00:00";
     return formatElapsed(Date.now() - details.sessao.tempoInicio);
   }, [details.sessao?.tempoInicio]);
 
-  async function pay(forma: FormaPagamento) {
+  async function pay() {
+    if (!selectedForma) return;
     if (valorCents <= 0) return;
-    if (forma !== "dinheiro" && valorCents > saldo) return;
-    await onConfirm(forma, valorCents, forma === "credito" ? aplicarAcrescimo : false);
+    if (selectedForma !== "dinheiro" && valorCents > saldo) return;
+    await onConfirm(
+      selectedForma,
+      valorCents,
+      selectedForma === "credito" ? aplicarAcrescimo : false,
+      aplicarGarcom
+    );
     setReloadToken((token) => token + 1);
   }
 
@@ -113,67 +136,82 @@ export function MesaCheckout({ details, closing, onClose, onConfirm }: MesaCheck
           inputMode="decimal"
         />
 
-        <div className="payment-breakdown">
-          {restante > 0 ? <span>Pagamento parcial — saldo restante: {formatCurrency(restante)}</span> : null}
-          {trocoCents > 0 ? <strong>Troco (dinheiro): {formatCurrency(trocoCents)}</strong> : null}
-          {excedeSaldo ? <span>PIX, Débito e Crédito não podem passar do saldo (use Dinheiro para troco).</span> : null}
+        {/* 1) Escolher a forma de pagamento */}
+        <span className="field-label">Forma de pagamento</span>
+        <div className="payment-grid">
+          {FORMAS.map(({ forma, label, icon: Icon }) => (
+            <Button
+              key={forma}
+              type="button"
+              icon={<Icon size={18} />}
+              variant={selectedForma === forma ? "primary" : "secondary"}
+              disabled={valorCents <= 0 || (forma !== "dinheiro" && excedeSaldo)}
+              onClick={() => {
+                setSelectedForma(forma);
+                if (forma !== "credito") setAplicarAcrescimo(false);
+              }}
+            >
+              {label}
+            </Button>
+          ))}
         </div>
 
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        {/* 2) Acréscimos: 5% só no crédito; garçom 10% sempre */}
+        <div className="checkout-fees">
+          {selectedForma === "credito" ? (
+            <Button
+              type="button"
+              variant={aplicarAcrescimo ? "primary" : "secondary"}
+              icon={<Percent size={16} />}
+              onClick={() => setAplicarAcrescimo((value) => !value)}
+            >
+              {aplicarAcrescimo ? "Acréscimo 5% ativo" : "Acrescentar 5% (crédito)"}
+            </Button>
+          ) : null}
           <Button
             type="button"
-            variant={aplicarAcrescimo ? "primary" : "secondary"}
-            icon={<Percent size={16} />}
-            onClick={() => setAplicarAcrescimo((value) => !value)}
+            variant={aplicarGarcom ? "primary" : "secondary"}
+            icon={<HandPlatter size={16} />}
+            onClick={() => setAplicarGarcom((value) => !value)}
           >
-            {aplicarAcrescimo ? "Acréscimo 5% ativo" : "Acrescentar 5% (crédito)"}
+            {aplicarGarcom ? "Garçom 10% ativo" : "Adicionar 10% do garçom"}
           </Button>
-          {aplicarAcrescimo ? (
+        </div>
+
+        <div className="payment-breakdown">
+          {acrescimoCents > 0 ? (
             <span>
-              + {formatCurrency(acrescimoCents)} • cobrar no crédito: {formatCurrency(valorCents + acrescimoCents)}
+              Acréscimo: + {formatCurrency(acrescimoCents)}
+              {acrescimoGarcomCents > 0 ? ` (garçom ${formatCurrency(acrescimoGarcomCents)})` : ""}
+              {acrescimoCreditoCents > 0 ? ` (crédito ${formatCurrency(acrescimoCreditoCents)})` : ""}
             </span>
+          ) : null}
+          {acrescimoCents > 0 ? <strong>Total a cobrar: {formatCurrency(totalCobrar)}</strong> : null}
+          {restante > 0 ? <span>Pagamento parcial — saldo restante: {formatCurrency(restante)}</span> : null}
+          {trocoCents > 0 ? <strong>Troco (dinheiro): {formatCurrency(trocoCents)}</strong> : null}
+          {naoDinheiroExcede ? (
+            <span>PIX, Débito e Crédito não podem passar do saldo (use Dinheiro para troco).</span>
           ) : null}
         </div>
 
-        <div className="payment-grid">
-          <Button
-            icon={<QrCode size={18} />}
-            loading={closing}
-            disabled={valorCents <= 0 || excedeSaldo}
-            onClick={() => pay("pix")}
-          >
-            PIX
-          </Button>
-          <Button
-            icon={<Banknote size={18} />}
-            variant="secondary"
-            loading={closing}
-            disabled={valorCents <= 0}
-            onClick={() => pay("dinheiro")}
-          >
-            Dinheiro
-          </Button>
-          <Button
-            icon={<Landmark size={18} />}
-            loading={closing}
-            disabled={valorCents <= 0 || excedeSaldo}
-            onClick={() => pay("debito")}
-          >
-            Débito
-          </Button>
-          <Button
-            icon={<CreditCard size={18} />}
-            variant="secondary"
-            loading={closing}
-            disabled={valorCents <= 0 || excedeSaldo}
-            onClick={() => pay("credito")}
-          >
-            Crédito
-          </Button>
-        </div>
+        {/* 3) Confirmar */}
+        <Button
+          type="button"
+          loading={closing}
+          disabled={!selectedForma || valorCents <= 0 || naoDinheiroExcede}
+          onClick={pay}
+        >
+          {selectedForma
+            ? `Confirmar ${formatCurrency(totalCobrar)} em ${formaLabel(selectedForma)}`
+            : "Escolha a forma de pagamento"}
+        </Button>
       </div>
     </Modal>
   );
+}
+
+function formaLabel(forma: FormaPagamento): string {
+  return FORMAS.find((f) => f.forma === forma)?.label ?? forma;
 }
 
 function formatElapsed(durationMillis: number): string {

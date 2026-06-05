@@ -4,6 +4,12 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const CREDIT_SURCHARGE_BPS: i64 = 500; // 5,00%
+const WAITER_FEE_BPS: i64 = 1_000; // 10,00% (taxa de garçom/serviço)
+
+/// Acréscimo percentual em centavos, arredondado (bps = pontos-base, 10000 = 100%).
+fn surcharge_cents(base_cents: i64, bps: i64) -> i64 {
+    (base_cents * bps + 5_000) / 10_000
+}
 
 fn now_millis() -> i64 {
     SystemTime::now()
@@ -130,6 +136,7 @@ pub fn registrar_pagamento_mesa(
     valor_tendered: i64,
     operator: &str,
     aplicar_acrescimo: bool,
+    aplicar_garcom: bool,
     turno_id: i64,
 ) -> AppResult<PagamentoMesaResult> {
     let forma = normalize_payment(forma)?;
@@ -160,11 +167,19 @@ pub fn registrar_pagamento_mesa(
 
     let aplicado = valor_tendered.min(saldo_before);
     let troco = (valor_tendered - aplicado).max(0); // so dinheiro pode gerar troco
-    let surcharge = if forma == "credito" && aplicar_acrescimo {
-        (aplicado * CREDIT_SURCHARGE_BPS + 5_000) / 10_000 // 5% arredondado
+    // Acréscimo de crédito (5%, só no crédito) + taxa de garçom (10%, qualquer
+    // forma). As duas podem somar.
+    let surcharge_credito = if forma == "credito" && aplicar_acrescimo {
+        surcharge_cents(aplicado, CREDIT_SURCHARGE_BPS)
     } else {
         0
     };
+    let surcharge_garcom = if aplicar_garcom {
+        surcharge_cents(aplicado, WAITER_FEE_BPS)
+    } else {
+        0
+    };
+    let surcharge = surcharge_credito + surcharge_garcom;
     let now = now_millis();
 
     tx.execute(

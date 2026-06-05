@@ -916,6 +916,7 @@ impl Database {
             input.valor_cents,
             &operator,
             input.aplicar_acrescimo.unwrap_or(false),
+            input.aplicar_garcom.unwrap_or(false),
             turno.id,
         )
     }
@@ -1154,11 +1155,19 @@ impl Database {
             .ok_or_else(|| AppError::InvalidInput("Mesa sem sessao aberta.".to_string()))?;
         let now = now_millis();
         let subtotal_cents = details.subtotal_cents;
-        let acrescimo_cents = if forma_pagamento == "credito" {
-            ((subtotal_cents as f64) * 0.05).round() as i64
+        // Acréscimo de crédito (5%) só quando o operador opta por ele no crédito;
+        // taxa de garçom (10%) é independente da forma de pagamento. Podem somar.
+        let acrescimo_credito = if forma_pagamento == "credito" && input.aplicar_acrescimo.unwrap_or(false) {
+            (subtotal_cents * 500 + 5_000) / 10_000
         } else {
             0
         };
+        let acrescimo_garcom = if input.aplicar_garcom.unwrap_or(false) {
+            (subtotal_cents * 1_000 + 5_000) / 10_000
+        } else {
+            0
+        };
+        let acrescimo_cents = acrescimo_credito + acrescimo_garcom;
         let total_cents = subtotal_cents + acrescimo_cents;
         let valor_pago_cents = if forma_pagamento == "dinheiro" {
             let paid = input.valor_pago_cents.ok_or_else(|| {
@@ -1346,11 +1355,19 @@ impl Database {
             product_rows.push((product, quantidade, subtotal));
         }
 
-        let acrescimo_cents = if forma_pagamento == "credito" {
-            ((subtotal_cents as f64) * 0.05).round() as i64
+        // Acréscimo de crédito (5%) só quando o operador opta por ele no crédito;
+        // taxa de garçom (10%) é independente da forma de pagamento. Podem somar.
+        let acrescimo_credito = if forma_pagamento == "credito" && input.aplicar_acrescimo.unwrap_or(false) {
+            (subtotal_cents * 500 + 5_000) / 10_000
         } else {
             0
         };
+        let acrescimo_garcom = if input.aplicar_garcom.unwrap_or(false) {
+            (subtotal_cents * 1_000 + 5_000) / 10_000
+        } else {
+            0
+        };
+        let acrescimo_cents = acrescimo_credito + acrescimo_garcom;
         let total_cents = subtotal_cents + acrescimo_cents;
         let valor_pago_cents = if forma_pagamento == "dinheiro" {
             let paid = input.valor_pago_cents.ok_or_else(|| {
@@ -3839,6 +3856,8 @@ mod tests {
             .fechar_venda_caixa(FecharVendaCaixaInput {
                 forma_pagamento: "dinheiro".into(),
                 valor_pago_cents: Some(3_000),
+                aplicar_acrescimo: None,
+                aplicar_garcom: None,
                 operator_name: Some("Ana".into()),
                 items: vec![SaleCartItemInput {
                     product_id: chopp.id,
@@ -3852,6 +3871,8 @@ mod tests {
             .fechar_venda_caixa(FecharVendaCaixaInput {
                 forma_pagamento: "credito".into(),
                 valor_pago_cents: None,
+                aplicar_acrescimo: None,
+                aplicar_garcom: None,
                 operator_name: Some("Ana".into()),
                 items: vec![SaleCartItemInput {
                     product_id: porcao.id,
@@ -3884,6 +3905,7 @@ mod tests {
                 forma_pagamento: "dinheiro".into(),
                 valor_cents: 5_000,
                 aplicar_acrescimo: None,
+                aplicar_garcom: None,
                 operator_name: Some("Ana".into()),
             })
             .expect("pagamento mesa 1");
@@ -3914,6 +3936,7 @@ mod tests {
                 forma_pagamento: "dinheiro".into(),
                 valor_cents: 4_000,
                 aplicar_acrescimo: None,
+                aplicar_garcom: None,
                 operator_name: Some("Ana".into()),
             })
             .expect("pagamento parcial mesa 2");
@@ -3976,6 +3999,7 @@ mod tests {
                 forma_pagamento: "dinheiro".into(),
                 valor_cents: 6_000,
                 aplicar_acrescimo: None,
+                aplicar_garcom: None,
                 operator_name: Some("Bruno".into()),
             })
             .expect("quitar mesa 2");
@@ -4037,6 +4061,8 @@ mod tests {
         let bloqueio = database.fechar_venda_caixa(FecharVendaCaixaInput {
             forma_pagamento: "dinheiro".into(),
             valor_pago_cents: Some(1_000),
+            aplicar_acrescimo: None,
+            aplicar_garcom: None,
             operator_name: Some("Ninguem".into()),
             items: vec![SaleCartItemInput {
                 product_id: chopp.id,
@@ -4151,6 +4177,8 @@ mod tests {
                 id_mesa: mesa.id,
                 forma_pagamento: "pix".to_string(),
                 valor_pago_cents: None,
+                aplicar_acrescimo: None,
+                aplicar_garcom: None,
                 operator_name: Some("admin".to_string()),
             })
             .expect("table should close");
@@ -4431,6 +4459,8 @@ mod tests {
             .fechar_venda_caixa(FecharVendaCaixaInput {
                 forma_pagamento: "dinheiro".to_string(),
                 valor_pago_cents: Some(2_500),
+                aplicar_acrescimo: None,
+                aplicar_garcom: None,
                 operator_name: Some("admin".to_string()),
                 items: vec![SaleCartItemInput {
                     product_id: product.id,

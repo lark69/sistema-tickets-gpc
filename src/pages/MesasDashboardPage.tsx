@@ -96,7 +96,8 @@ export function MesasDashboardPage({
     nomeCliente: string,
     formaPagamento: FormaPagamento,
     valorPagoCents?: number | null,
-    aplicarAcrescimo = false
+    aplicarAcrescimo = false,
+    aplicarGarcom = false
   ) {
     if (!details) return;
     if (!cashOpen) {
@@ -119,6 +120,7 @@ export function MesasDashboardPage({
         formaPagamento,
         valorCents: valorPagoCents ?? 0,
         aplicarAcrescimo,
+        aplicarGarcom,
         operatorName
       });
       if (resultado.finalizada) {

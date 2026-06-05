@@ -126,6 +126,7 @@ export interface RegistrarPagamentoMesaInput {
   formaPagamento: FormaPagamento;
   valorCents: number;
   aplicarAcrescimo?: boolean;
+  aplicarGarcom?: boolean;
   operatorName?: string | null;
 }
 
@@ -217,6 +218,8 @@ export interface FecharMesaInput {
   idMesa: number;
   formaPagamento: FormaPagamento;
   valorPagoCents?: number | null;
+  aplicarAcrescimo?: boolean;
+  aplicarGarcom?: boolean;
   operatorName?: string | null;
 }
 
@@ -228,8 +231,10 @@ export interface SaleCartItemInput {
 export interface FecharVendaCaixaInput {
   formaPagamento: FormaPagamento;
   valorPagoCents?: number | null;
-  operatorName?: string | null;
+  aplicarAcrescimo?: boolean;
+  aplicarGarcom?: boolean;
   items: SaleCartItemInput[];
+  operatorName?: string | null;
 }
 
 export interface TicketProduto {

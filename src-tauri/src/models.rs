@@ -252,6 +252,10 @@ pub struct FecharMesaInput {
     pub id_mesa: i64,
     pub forma_pagamento: String,
     pub valor_pago_cents: Option<i64>,
+    #[serde(default)]
+    pub aplicar_acrescimo: Option<bool>,
+    #[serde(default)]
+    pub aplicar_garcom: Option<bool>,
     pub operator_name: Option<String>,
 }
 
@@ -268,6 +272,10 @@ pub struct FecharVendaCaixaInput {
     pub forma_pagamento: String,
     pub valor_pago_cents: Option<i64>,
     pub operator_name: Option<String>,
+    #[serde(default)]
+    pub aplicar_acrescimo: Option<bool>,
+    #[serde(default)]
+    pub aplicar_garcom: Option<bool>,
     pub items: Vec<SaleCartItemInput>,
 }
 
@@ -588,6 +596,8 @@ pub struct RegistrarPagamentoMesaInput {
     pub forma_pagamento: String,
     pub valor_cents: i64,
     pub aplicar_acrescimo: Option<bool>,
+    #[serde(default)]
+    pub aplicar_garcom: Option<bool>,
     pub operator_name: Option<String>,
 }
 

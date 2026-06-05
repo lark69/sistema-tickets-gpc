@@ -142,7 +142,12 @@ export function CashRegisterPage({
     }
   }
 
-  async function finishSale(formaPagamento: FormaPagamento, valorPagoCents?: number | null) {
+  async function finishSale(
+    formaPagamento: FormaPagamento,
+    valorPagoCents?: number | null,
+    aplicarAcrescimo = false,
+    aplicarGarcom = false
+  ) {
     if (!turno) {
       onMessage("Abra um turno na area de Fechamento antes de vender.", "error");
       return;
@@ -157,6 +162,8 @@ export function CashRegisterPage({
       const ticket = await adminService.fecharVendaCaixa({
         formaPagamento,
         valorPagoCents,
+        aplicarAcrescimo,
+        aplicarGarcom,
         operatorName: currentUser.username,
         items: cart.map((item) => ({
           productId: item.product.id,

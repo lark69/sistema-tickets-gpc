@@ -28,7 +28,8 @@ interface MesaModalProps {
     nomeCliente: string,
     formaPagamento: FormaPagamento,
     valorPagoCents: number,
-    aplicarAcrescimo: boolean
+    aplicarAcrescimo: boolean,
+    aplicarGarcom: boolean
   ) => Promise<void>;
 }
 
@@ -214,8 +215,8 @@ export function MesaModal({
           details={checkoutDetails}
           closing={closing}
           onClose={() => setCheckoutOpen(false)}
-          onConfirm={(formaPagamento, valorPagoCents, aplicarAcrescimo) =>
-            onCheckout(items, nomeCliente, formaPagamento, valorPagoCents, aplicarAcrescimo)
+          onConfirm={(formaPagamento, valorPagoCents, aplicarAcrescimo, aplicarGarcom) =>
+            onCheckout(items, nomeCliente, formaPagamento, valorPagoCents, aplicarAcrescimo, aplicarGarcom)
           }
         />
       ) : null}
